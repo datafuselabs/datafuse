@@ -31,15 +31,18 @@ use common_streams::SendableDataBlockStream;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
+use crate::catalogs::Catalog;
 use crate::catalogs::Table;
+use crate::catalogs::TableCommitmentReply;
 use crate::datasources::dal::DataAccessor;
-//use crate::datasources::table::fuse::parse_storage_scheme;
+use crate::datasources::table::fuse::parse_storage_scheme;
 use crate::datasources::table::fuse::project_col_idx;
 use crate::datasources::table::fuse::range_filter;
 use crate::datasources::table::fuse::read_part;
 use crate::datasources::table::fuse::read_table_snapshot;
 use crate::datasources::table::fuse::segment_info_location;
 use crate::datasources::table::fuse::snapshot_location;
+use crate::datasources::table::fuse::BlockAppender;
 use crate::datasources::table::fuse::BlockLocation;
 use crate::datasources::table::fuse::MetaInfoReader;
 use crate::datasources::table::fuse::SegmentInfo;
@@ -51,7 +54,6 @@ pub struct FuseTable {
     pub db: String,
     pub name: String,
     pub schema: DataSchemaRef,
-    // Storage scheme is fixed during the whole life of the table
     // Local | FuseDFS | S3 | ... etc.
     pub storage_scheme: TableStorageScheme,
     pub local: bool,
@@ -76,8 +78,8 @@ impl FuseTable {
         let bytes = serde_json::to_vec(&snapshot)?;
         data_accessor.put(location, bytes).await
     }
-    pub(crate) fn merge_seg(&self, new_seg: String, mut prev: TableSnapshot) -> TableSnapshot {
-        prev.segments.push(new_seg);
+    pub(crate) fn merge_seg(&self, new_seg: &str, mut prev: TableSnapshot) -> TableSnapshot {
+        prev.segments.push(new_seg.to_owned());
         let new_id = Uuid::new_v4();
         prev.snapshot_id = new_id;
         prev
@@ -86,33 +88,21 @@ impl FuseTable {
 
 impl FuseTable {
     pub fn try_create(
-        _db: String,
-        _name: String,
-        _schema: DataSchemaRef,
-        _options: TableOptions,
+        db: String,
+        name: String,
+        schema: DataSchemaRef,
+        options: TableOptions,
     ) -> Result<Box<dyn Table>> {
-        todo!()
+        let storage_scheme = parse_storage_scheme(options.get("STORAGE_SCHEME"))?;
+        let res = FuseTable {
+            db,
+            name,
+            schema,
+            storage_scheme,
+            local: true,
+        };
+        Ok(Box::new(res))
     }
-
-    //    pub fn with_meta_client(
-    //        db: String,
-    //        name: String,
-    //        schema: DataSchemaRef,
-    //        options: TableOptions,
-    //        meta_client: T,
-    //    ) -> Result<Box<dyn Table>> {
-    //        let storage_scheme = parse_storage_scheme(options.get("STORAGE_SCHEME"))?;
-    //        let res = FuseTable {
-    //            db,
-    //            name,
-    //            schema,
-    //            storage_scheme,
-    //            meta_client,
-    //            local: true,
-    //        };
-    //
-    //        Ok(Box::new(res))
-    //    }
 }
 
 #[async_trait::async_trait]
@@ -121,6 +111,7 @@ impl Table for FuseTable {
         &self.name
     }
 
+    // TODO should reflects the Table Engine which create this table
     fn engine(&self) -> &str {
         "fuse"
     }
@@ -133,6 +124,7 @@ impl Table for FuseTable {
         Ok(self.schema.clone())
     }
 
+    // TODO this method no longer make sense, should we remove it from all instance of `Table`?
     fn is_local(&self) -> bool {
         self.local
     }
@@ -230,7 +222,8 @@ impl Table for FuseTable {
         let data_accessor = self.data_accessor(&ctx)?;
 
         // 2. Append blocks to storage
-        let segment_info = self.append_blocks(ctx.clone(), block_stream).await?;
+        let appender = BlockAppender::new(data_accessor.clone());
+        let segment_info = appender.append_blocks(block_stream).await?;
         let seg_loc = {
             let uuid = Uuid::new_v4().to_simple().to_string();
             segment_info_location(&uuid)
@@ -242,9 +235,9 @@ impl Table for FuseTable {
         let tbl_snapshot = self
             .table_snapshot(&ctx)?
             .unwrap_or_else(TableSnapshot::new);
-        let _snapshot_id = tbl_snapshot.snapshot_id;
-        let new_snapshot: TableSnapshot = self.merge_seg(seg_loc, tbl_snapshot);
-        let _new_snapshot_id = new_snapshot.snapshot_id;
+        let prev_snapshot_id = tbl_snapshot.snapshot_id;
+        let new_snapshot: TableSnapshot = self.merge_seg(&seg_loc, tbl_snapshot);
+        let new_snapshot_id = new_snapshot.snapshot_id;
 
         let snapshot_loc = {
             let uuid = Uuid::new_v4().to_simple().to_string();
@@ -255,16 +248,34 @@ impl Table for FuseTable {
             .await?;
 
         // 4. commit
-        let _table_id = insert_plan.tbl_id;
-        // TODO simple retry strategy
-        // self.meta_client
-        //     .commit_table(
-        //         table_id,
-        //         snapshot_id.to_simple().to_string(),
-        //         new_snapshot_id.to_simple().to_string(),
-        //     )
-        //     .await?;
-        Ok(())
+        let table_id = insert_plan.tbl_id;
+        let catalog = ctx.get_catalog();
+
+        // TODO Err is also recoverable,
+        let mut res = catalog.commit_table_snapshot(
+            table_id,
+            prev_snapshot_id.to_simple().to_string(), // wrap this
+            new_snapshot_id.to_simple().to_string(),
+        )?;
+
+        // TODO crossbeam backoff?
+        loop {
+            match res {
+                TableCommitmentReply::Success => break Ok(()),
+                TableCommitmentReply::Conflict(latest_snapshot_id) => {
+                    let latest = self.table_snapshot_by_id(&ctx, Some(&latest_snapshot_id))?;
+                    let latest = latest.unwrap();
+                    let new_snapshot = self.merge_seg(&seg_loc, latest);
+                    let new_snapshot_id = new_snapshot.snapshot_id;
+                    res = catalog.commit_table_snapshot(
+                        table_id,
+                        prev_snapshot_id.to_simple().to_string(),
+                        new_snapshot_id.to_simple().to_string(),
+                    )?;
+                }
+                TableCommitmentReply::Fatal(_msg) => todo!(),
+            }
+        }
     }
 
     async fn truncate(
@@ -280,6 +291,19 @@ impl FuseTable {
     fn table_snapshot(&self, ctx: &DatabendQueryContextRef) -> Result<Option<TableSnapshot>> {
         let schema = self.schema()?;
         if let Some(loc) = schema.meta().get("META_SNAPSHOT_LOCATION") {
+            let r = read_table_snapshot(self.data_accessor(ctx)?, ctx, loc)?;
+            Ok(Some(r))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn table_snapshot_by_id(
+        &self,
+        ctx: &DatabendQueryContextRef,
+        snapshot_id: Option<&str>,
+    ) -> Result<Option<TableSnapshot>> {
+        if let Some(loc) = snapshot_id {
             let r = read_table_snapshot(self.data_accessor(ctx)?, ctx, loc)?;
             Ok(Some(r))
         } else {
