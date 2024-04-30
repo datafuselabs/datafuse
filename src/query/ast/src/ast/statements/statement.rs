@@ -242,6 +242,8 @@ pub enum Statement {
         location: String,
         #[drive(skip)]
         pattern: Option<String>,
+        #[drive(skip)]
+        start_after: Option<String>,
     },
     // Connection
     CreateConnection(CreateConnectionStmt),
@@ -623,10 +625,17 @@ impl Display for Statement {
                 write!(f, " {udf_name}")?;
             }
             Statement::AlterUDF(stmt) => write!(f, "{stmt}")?,
-            Statement::ListStage { location, pattern } => {
+            Statement::ListStage {
+                location,
+                pattern,
+                start_after,
+            } => {
                 write!(f, "LIST @{location}")?;
                 if let Some(pattern) = pattern {
                     write!(f, " PATTERN = '{pattern}'")?;
+                }
+                if let Some(start_after) = start_after {
+                    write!(f, " START_AFTER = '{start_after}'")?;
                 }
             }
             Statement::ShowStages => write!(f, "SHOW STAGES")?,

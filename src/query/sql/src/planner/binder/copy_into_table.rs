@@ -142,6 +142,8 @@ impl<'a> Binder {
             path,
             files: stmt.files.clone(),
             pattern: stmt.pattern.clone(),
+            // TODO: support start after in copy.
+            start_after: None,
         };
         let required_values_schema: DataSchemaRef = Arc::new(
             match &stmt.dst_columns {
@@ -263,6 +265,7 @@ impl<'a> Binder {
             path,
             files: None,
             pattern: None,
+            start_after: None,
         };
         Ok((stage_info, files_info))
     }
