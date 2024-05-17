@@ -27,6 +27,7 @@ extern crate core;
 mod block;
 mod column;
 mod common;
+mod data_types;
 mod decimal;
 mod group_by;
 mod kernel;
@@ -35,6 +36,8 @@ mod row;
 mod schema;
 mod serde;
 mod sort;
+mod types;
+mod values;
 
 fn rand_block_for_all_types(num_rows: usize) -> DataBlock {
     let types = get_all_test_data_types();

@@ -2959,6 +2959,8 @@ dependencies = [
  "bytes",
  "chrono",
  "chrono-tz",
+ "databend-common-base",
+ "databend-common-exception",
  "databend-common-parquet2",
  "dyn-clone",
  "either",
@@ -3229,16 +3231,17 @@ name = "databend-common-exception"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow-format",
  "arrow-schema 51.0.0",
  "backtrace 0.3.69 (git+https://github.com/rust-lang/backtrace-rs.git?rev=6145fe6bac65c38375f1216a565a6cc7deb89a2d)",
  "bincode 2.0.0-rc.3",
  "codespan-reporting",
- "databend-common-arrow",
  "geos",
  "geozero",
  "http 1.1.0",
  "opendal",
  "parquet",
+ "parquet2",
  "paste",
  "prost 0.12.3",
  "serde",
@@ -3805,6 +3808,7 @@ dependencies = [
  "brotli",
  "bytes",
  "criterion",
+ "databend-common-exception",
  "flate2",
  "futures",
  "lz4",
@@ -10768,6 +10772,20 @@ checksum = "1131c54b167dd4e4799ce762e1ab01549ebb94d5bdd13e6ec1b467491c378e1f"
 dependencies = [
  "async-trait",
  "futures",
+]
+
+[[package]]
+name = "parquet2"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "579fe5745f02cef3d5f236bfed216fd4693e49e4e920a13475c6132233283bce"
+dependencies = [
+ "async-stream",
+ "futures",
+ "parquet-format-safe",
+ "seq-macro",
+ "serde",
+ "streaming-decompression",
 ]
 
 [[package]]

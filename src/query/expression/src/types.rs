@@ -37,6 +37,7 @@ use std::fmt::Debug;
 use std::ops::Range;
 
 use databend_common_arrow::arrow::trusted_len::TrustedLen;
+use databend_common_base::runtime::OwnedMemoryUsageSize;
 use enum_as_inner::EnumAsInner;
 use serde::Deserialize;
 use serde::Serialize;
@@ -301,6 +302,31 @@ impl DataType {
             DataType::Decimal(decimal_type) => Some(decimal_type.size()),
             DataType::Number(num_ty) => num_ty.get_decimal_properties(),
             _ => None,
+        }
+    }
+}
+
+impl OwnedMemoryUsageSize for DataType {
+    fn owned_memory_usage(&mut self) -> usize {
+        match self {
+            DataType::Null
+            | DataType::EmptyArray
+            | DataType::EmptyMap
+            | DataType::Boolean
+            | DataType::Binary
+            | DataType::String
+            | DataType::Number(_)
+            | DataType::Decimal(_)
+            | DataType::Timestamp
+            | DataType::Bitmap
+            | DataType::Variant
+            | DataType::Geometry
+            | DataType::Generic(_)
+            | DataType::Date => 0,
+            DataType::Nullable(v) => v.owned_memory_usage(),
+            DataType::Array(v) => v.owned_memory_usage(),
+            DataType::Map(v) => v.owned_memory_usage(),
+            DataType::Tuple(v) => v.owned_memory_usage(),
         }
     }
 }

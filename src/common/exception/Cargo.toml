@@ -11,7 +11,6 @@ doctest = false
 test = true
 
 [dependencies] # In alphabetical order
-databend-common-arrow = { path = "../arrow" }
 
 # GitHub dependencies
 # TODO: Use the version from crates.io once
@@ -19,6 +18,7 @@ databend-common-arrow = { path = "../arrow" }
 codespan-reporting = { git = "https://github.com/brendanzab/codespan", rev = "c84116f5" }
 
 anyhow = { workspace = true }
+arrow-format = { workspace = true }
 arrow-schema = { workspace = true }
 backtrace = { git = "https://github.com/rust-lang/backtrace-rs.git", rev = "6145fe6bac65c38375f1216a565a6cc7deb89a2d" }
 #backtrace = "0.3.69"
@@ -28,6 +28,7 @@ geozero = { workspace = true }
 http = { workspace = true }
 opendal = { workspace = true }
 parquet = { workspace = true }
+parquet2 = { version = "0.17.0", default_features = false, features = ["serde_types", "async"] }
 paste = "1.0.9"
 prost = { workspace = true }
 serde = { workspace = true }

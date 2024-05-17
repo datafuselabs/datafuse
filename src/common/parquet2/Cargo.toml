@@ -10,6 +10,8 @@ bench = false
 name = "parquet2"
 
 [dependencies]
+databend-common-exception = { path = "../../common/exception" }
+
 bytes = { workspace = true }
 parquet-format-safe = "0.2"
 seq-macro = { version = "0.3", default-features = false }

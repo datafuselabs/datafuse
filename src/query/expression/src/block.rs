@@ -20,6 +20,7 @@ use std::ops::Range;
 use databend_common_arrow::arrow::array::Array;
 use databend_common_arrow::arrow::chunk::Chunk as ArrowChunk;
 use databend_common_arrow::ArrayRef;
+use databend_common_base::runtime::OwnedMemoryUsageSize;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 
@@ -76,6 +77,12 @@ impl BlockEntry {
 
     pub fn to_column(&self, num_rows: usize) -> Column {
         self.value.convert_to_full_column(&self.data_type, num_rows)
+    }
+}
+
+impl OwnedMemoryUsageSize for BlockEntry {
+    fn owned_memory_usage(&mut self) -> usize {
+        self.data_type.owned_memory_usage() + self.value.owned_memory_usage()
     }
 }
 
@@ -562,6 +569,12 @@ impl DataBlock {
         debug_assert!(!self.columns.is_empty());
         debug_assert!(self.columns.last().unwrap().value.as_column().is_some());
         self.columns.last().unwrap().value.as_column().unwrap()
+    }
+}
+
+impl OwnedMemoryUsageSize for DataBlock {
+    fn owned_memory_usage(&mut self) -> usize {
+        self.columns.owned_memory_usage() /*+ self.meta.owned_memory_usage()*/
     }
 }
 

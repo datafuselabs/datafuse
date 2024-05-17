@@ -15,6 +15,8 @@
 
 //! Contains [`Error`]
 
+use databend_common_exception::ErrorCode;
+
 /// List of features whose non-activation may cause a runtime error.
 /// Used to indicate which lack of feature caused [`Error::FeatureNotActive`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -130,6 +132,12 @@ impl From<std::num::TryFromIntError> for Error {
 impl From<std::array::TryFromSliceError> for Error {
     fn from(e: std::array::TryFromSliceError) -> Error {
         Error::OutOfSpec(format!("Can't deserialize to parquet native type: {}", e))
+    }
+}
+
+impl From<Error> for ErrorCode {
+    fn from(error: Error) -> Self {
+        ErrorCode::from_std_error(error)
     }
 }
 
