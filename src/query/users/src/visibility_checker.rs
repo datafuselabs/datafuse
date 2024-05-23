@@ -147,6 +147,7 @@ impl GrantObjectVisibilityChecker {
                             granted_read_stages.insert(stage.to_string());
                         }
                     }
+                    GrantObject::Task(_) => {}
                 }
             }
         }

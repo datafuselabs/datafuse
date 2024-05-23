@@ -144,7 +144,6 @@ use crate::plans::ShowObjectGrantPrivilegesPlan;
 use crate::plans::ShowRolesPlan;
 use crate::plans::ShowShareEndpointPlan;
 use crate::plans::ShowSharesPlan;
-use crate::plans::ShowTasksPlan;
 use crate::plans::TruncateTablePlan;
 use crate::plans::UnSettingPlan;
 use crate::plans::UndropDatabasePlan;
@@ -345,7 +344,6 @@ pub enum Plan {
     AlterTask(Box<AlterTaskPlan>),
     DropTask(Box<DropTaskPlan>),
     DescribeTask(Box<DescribeTaskPlan>),
-    ShowTasks(Box<ShowTasksPlan>),
     ExecuteTask(Box<ExecuteTaskPlan>),
 
     CreateDynamicTable(Box<CreateDynamicTablePlan>),
@@ -383,6 +381,7 @@ pub enum RewriteKind {
     ShowDatabases,
     ShowTables(String, String),
     ShowColumns(String, String, String),
+    ShowTasks,
     ShowTablesStatus,
     ShowVirtualColumns,
 
@@ -475,7 +474,6 @@ impl Plan {
             Plan::MergeInto(plan) => plan.schema(),
             Plan::CreateTask(plan) => plan.schema(),
             Plan::DescribeTask(plan) => plan.schema(),
-            Plan::ShowTasks(plan) => plan.schema(),
             Plan::ExecuteTask(plan) => plan.schema(),
             Plan::DescNotification(plan) => plan.schema(),
             Plan::DescConnection(plan) => plan.schema(),
