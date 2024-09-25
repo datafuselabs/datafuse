@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::io::SeekFrom;
+use std::sync::Arc;
 
 use arrow_ipc::convert::try_schema_from_ipc_buffer;
 use bytes::Buf;
@@ -22,6 +23,7 @@ use databend_common_expression::TableSchemaRef;
 use databend_common_io::constants::DEFAULT_FOOTER_READ_SIZE;
 use databend_storages_common_cache::CacheManager;
 use databend_storages_common_cache::InMemoryItemCacheReader;
+use databend_storages_common_cache::InMemoryLruCache;
 use databend_storages_common_cache::LoadParams;
 use databend_storages_common_cache::Loader;
 use databend_storages_common_index::BloomIndexMeta;
@@ -66,7 +68,10 @@ impl MetaReaders {
         dal: Operator,
         schema: TableSchemaRef,
     ) -> CompactSegmentInfoReader {
-        CompactSegmentInfoReader::new(None, LoaderWrapper((dal, schema)))
+        CompactSegmentInfoReader::new(
+            Arc::new(None::<InMemoryLruCache<CompactSegmentInfo>>),
+            LoaderWrapper((dal, schema)),
+        )
     }
 
     pub fn table_snapshot_reader(dal: Operator) -> TableSnapshotReader {
@@ -77,7 +82,10 @@ impl MetaReaders {
     }
 
     pub fn table_snapshot_reader_without_cache(dal: Operator) -> TableSnapshotReader {
-        TableSnapshotReader::new(None, LoaderWrapper(dal))
+        TableSnapshotReader::new(
+            Arc::new(None::<InMemoryLruCache<TableSnapshot>>),
+            LoaderWrapper(dal),
+        )
     }
 
     pub fn table_snapshot_statistics_reader(dal: Operator) -> TableSnapshotStatisticsReader {
