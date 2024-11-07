@@ -69,6 +69,7 @@ use jsonb::array_except;
 use jsonb::array_insert;
 use jsonb::array_intersection;
 use jsonb::array_length;
+use jsonb::RawJsonb;
 use jsonb::array_overlap;
 use jsonb::as_bool;
 use jsonb::as_f64;
@@ -255,7 +256,10 @@ pub fn register(registry: &mut FunctionRegistry) {
         "length",
         |_, _| FunctionDomain::Full,
         vectorize_1_arg::<NullableType<VariantType>, NullableType<UInt32Type>>(|val, _| {
-            val.and_then(|v| array_length(v).map(|v| v as u32))
+            val.and_then(|v| {
+                let jsonb_val = RawJsonb(v);
+                jsonb_val.array_length().unwrap().map(|v| v as u32))
+            })
         }),
     );
 
