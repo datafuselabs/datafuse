@@ -257,8 +257,8 @@ pub fn register(registry: &mut FunctionRegistry) {
         |_, _| FunctionDomain::Full,
         vectorize_1_arg::<NullableType<VariantType>, NullableType<UInt32Type>>(|val, _| {
             val.and_then(|v| {
-                let jsonb_val = RawJsonb(v);
-                jsonb_val.array_length().unwrap().map(|v| v as u32))
+                let raw_jsonb = RawJsonb(v);
+                raw_jsonb.array_length().unwrap().map(|v| v as u32)
             })
         }),
     );

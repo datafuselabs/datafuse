@@ -32,6 +32,7 @@ use itertools::Itertools;
 use num_traits::FromPrimitive;
 use rust_decimal::Decimal;
 use rust_decimal::RoundingStrategy;
+use jsonb::RawJsonb;
 
 use crate::block::DataBlock;
 use crate::expression::Expr;
@@ -259,7 +260,8 @@ impl<'a> Display for ScalarRef<'a> {
                 write!(f, ")")
             }
             ScalarRef::Variant(s) => {
-                let value = jsonb::to_string(s);
+                let raw_jsonb = RawJsonb(s);
+                let value = raw_jsonb.to_string();
                 write!(f, "'{value}'")
             }
             ScalarRef::Geometry(s) => {
