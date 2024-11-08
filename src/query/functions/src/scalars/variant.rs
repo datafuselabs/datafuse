@@ -70,6 +70,7 @@ use jsonb::build_object;
 use jsonb::jsonpath::parse_json_path;
 use jsonb::jsonpath::JsonPath;
 use jsonb::keypath::parse_key_paths;
+use jsonb::parse_value;
 
 pub fn register(registry: &mut FunctionRegistry) {
     registry.register_aliases("json_object_keys", &["object_keys"]);
@@ -86,7 +87,8 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             // Variant value may be an invalid JSON, convert them to string and then parse.
-            let val = to_string(s);
+            let raw_jsonb = RawJsonb(s);
+            let val = raw_jsonb.to_string();
             match parse_value(val.as_bytes()) {
                 Ok(value) => {
                     value.write_to_vec(&mut output.data);
@@ -140,7 +142,8 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             // Variant value may be an invalid JSON, convert them to string and then parse.
-            let val = to_string(s);
+            let raw_jsonb = RawJsonb(s);
+            let val = raw_jsonb.to_string();
             match parse_value(val.as_bytes()) {
                 Ok(value) => {
                     output.validity.push(true);
@@ -184,7 +187,8 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             // Variant value may be an invalid JSON, convert them to string and then check.
-            let val = to_string(s);
+            let raw_jsonb = RawJsonb(s);
+            let val = raw_jsonb.to_string();
             match parse_value(val.as_bytes()) {
                 Ok(_) => output.push_null(),
                 Err(e) => output.push(&e.to_string()),

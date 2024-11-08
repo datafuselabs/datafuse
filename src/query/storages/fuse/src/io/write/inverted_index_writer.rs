@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use jsonb::RawJsonb;
 use arrow_ipc::writer::write_message;
 use arrow_ipc::writer::IpcDataGenerator;
 use arrow_ipc::writer::IpcWriteOptions;
@@ -109,7 +110,7 @@ impl InvertedIndexWriter {
                     ScalarRef::String(text) => doc.add_text(field, text),
                     ScalarRef::Variant(jsonb_val) => {
                         // only support object JSON, other JSON type will not add index.
-                        if let Ok(Some(obj_val)) = jsonb::to_serde_json_object(jsonb_val) {
+                        if let Ok(Some(obj_val)) = RawJsonb(jsonb_val).to_serde_json_object() {
                             let object: BTreeMap<String, OwnedValue> = obj_val
                                 .into_iter()
                                 .map(|(key, value)| (key, OwnedValue::from(value)))

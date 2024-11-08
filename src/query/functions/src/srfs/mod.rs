@@ -13,11 +13,11 @@
 // limitations under the License.
 
 mod array;
-mod variant;
+//mod variant;
 
 use databend_common_expression::FunctionRegistry;
 
 pub fn register(registry: &mut FunctionRegistry) {
     array::register(registry);
-    variant::register(registry);
+    //variant::register(registry);
 }

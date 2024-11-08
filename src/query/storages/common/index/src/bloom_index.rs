@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use jsonb::RawJsonb;
 use databend_common_arrow::arrow::bitmap::Bitmap;
 use databend_common_arrow::arrow::buffer::Buffer;
 use databend_common_ast::Span;
@@ -239,7 +240,8 @@ impl BloomIndex {
                         );
                         for val in column.iter() {
                             if let ScalarRef::Variant(v) = val {
-                                if let Ok(str_val) = jsonb::to_str(v) {
+                                let raw_jsonb = RawJsonb(v);
+                                if let Ok(str_val) = raw_jsonb.to_str() {
                                     builder.push(ScalarRef::String(str_val.as_str()));
                                     continue;
                                 }

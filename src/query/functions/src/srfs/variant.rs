@@ -49,17 +49,18 @@ use jaq_interpret::RcIter;
 use jaq_interpret::Val;
 use jaq_parse;
 use jaq_std;
-use jsonb::array_length;
-use jsonb::array_values;
-use jsonb::as_str;
-use jsonb::get_by_index;
-use jsonb::get_by_name;
+use jsonb::RawJsonb;
+//use jsonb::array_length;
+//use jsonb::array_values;
+//use jsonb::as_str;
+//use jsonb::get_by_index;
+//use jsonb::get_by_name;
 use jsonb::jsonpath::parse_json_path;
 use jsonb::jsonpath::Mode as SelectorMode;
 use jsonb::jsonpath::Selector;
-use jsonb::object_each;
-use jsonb::object_keys;
-use jsonb::to_serde_json;
+//use jsonb::object_each;
+//use jsonb::object_keys;
+//use jsonb::to_serde_json;
 
 pub fn register(registry: &mut FunctionRegistry) {
     registry.properties.insert(

@@ -46,6 +46,7 @@ use geozero::ToWkt;
 use lexical_core::ToLexical;
 use micromarshal::Marshal;
 use micromarshal::Unmarshal;
+use jsonb::RawJsonb;
 
 use crate::field_encoder::helpers::write_quoted_string;
 use crate::field_encoder::helpers::PrimitiveWithFormat;
@@ -296,7 +297,7 @@ impl FieldEncoderValues {
         in_nested: bool,
     ) {
         let v = unsafe { column.index_unchecked(row_index) };
-        let s = jsonb::to_string(v);
+        let s = RawJsonb(v).to_string();
         self.write_string_inner(s.as_bytes(), out_buf, in_nested);
     }
 
