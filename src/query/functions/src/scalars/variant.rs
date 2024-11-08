@@ -841,10 +841,10 @@ pub fn register(registry: &mut FunctionRegistry) {
                     return;
                 }
             }
-            match RawJsonb(v).to_bool() {
-                Ok(res) => output.push(res),
-                Err(err) => {
-                    ctx.set_error(output.len(), err.to_string());
+            match cast_to_bool(v) {
+                Some(res) => output.push(res),
+                None => {
+                    ctx.set_error(output.len(), "unable to cast to type `BOOLEAN`");
                     output.push(false);
                 }
             }
@@ -862,34 +862,25 @@ pub fn register(registry: &mut FunctionRegistry) {
                         return;
                     }
                 }
-                match RawJsonb(v).to_bool() {
-                    Ok(res) => output.push(res),
-                    Err(err) => {
-                        println!("err={:?}", err);
-                        if err.to_string() == "InvalidJsonb" {
-                            println!("is invalid");
-                        } else {
-                            println!("not is invalid");
-                        }
-                        output.push_null();
-                    }
+                match cast_to_bool(v) {
+                    Some(res) => output.push(res),
+                    None => output.push_null(),
                 }
             },
         ),
     );
 
-/**
     registry.register_passthrough_nullable_1_arg::<VariantType, StringType, _, _>(
         "to_string",
         |_, _| FunctionDomain::Full,
-        vectorize_with_builder_1_arg::<VariantType, StringType>(|val, output, ctx| {
+        vectorize_with_builder_1_arg::<VariantType, StringType>(|v, output, ctx| {
             if let Some(validity) = &ctx.validity {
                 if !validity.get_bit(output.len()) {
                     output.commit_row();
                     return;
                 }
             }
-            let json_str = cast_to_string(val);
+            let json_str = cast_to_string(v);
             output.put_str(&json_str);
             output.commit_row();
         }),
@@ -899,14 +890,14 @@ pub fn register(registry: &mut FunctionRegistry) {
         "try_to_string",
         |_, _| FunctionDomain::Full,
         vectorize_with_builder_1_arg::<VariantType, NullableType<StringType>>(
-            |val, output, ctx| {
+            |v, output, ctx| {
                 if let Some(validity) = &ctx.validity {
                     if !validity.get_bit(output.len()) {
                         output.push_null();
                         return;
                     }
                 }
-                let json_str = cast_to_string(val);
+                let json_str = cast_to_string(v);
                 output.push(&json_str);
             },
         ),
@@ -915,15 +906,14 @@ pub fn register(registry: &mut FunctionRegistry) {
     registry.register_passthrough_nullable_1_arg::<VariantType, DateType, _, _>(
         "to_date",
         |_, _| FunctionDomain::MayThrow,
-        vectorize_with_builder_1_arg::<VariantType, DateType>(|val, output, ctx| {
+        vectorize_with_builder_1_arg::<VariantType, DateType>(|v, output, ctx| {
             if let Some(validity) = &ctx.validity {
                 if !validity.get_bit(output.len()) {
                     output.push(0);
                     return;
                 }
             }
-            let val = as_str(val);
-            match val {
+            match cast_to_str(v) {
                 Some(val) => match string_to_date(
                     val.as_bytes(),
                     ctx.func_ctx.tz.tz,
@@ -949,15 +939,14 @@ pub fn register(registry: &mut FunctionRegistry) {
     registry.register_combine_nullable_1_arg::<VariantType, DateType, _, _>(
         "try_to_date",
         |_, _| FunctionDomain::Full,
-        vectorize_with_builder_1_arg::<VariantType, NullableType<DateType>>(|val, output, ctx| {
+        vectorize_with_builder_1_arg::<VariantType, NullableType<DateType>>(|v, output, ctx| {
             if let Some(validity) = &ctx.validity {
                 if !validity.get_bit(output.len()) {
                     output.push_null();
                     return;
                 }
             }
-            let val = as_str(val);
-            match val {
+            match cast_to_str(v) {
                 Some(val) => match string_to_date(
                     val.as_bytes(),
                     ctx.func_ctx.tz.tz,
@@ -974,15 +963,14 @@ pub fn register(registry: &mut FunctionRegistry) {
     registry.register_passthrough_nullable_1_arg::<VariantType, TimestampType, _, _>(
         "to_timestamp",
         |_, _| FunctionDomain::MayThrow,
-        vectorize_with_builder_1_arg::<VariantType, TimestampType>(|val, output, ctx| {
+        vectorize_with_builder_1_arg::<VariantType, TimestampType>(|v, output, ctx| {
             if let Some(validity) = &ctx.validity {
                 if !validity.get_bit(output.len()) {
                     output.push(0);
                     return;
                 }
             }
-            let val = as_str(val);
-            match val {
+            match cast_to_str(v) {
                 Some(val) => match string_to_timestamp(
                     val.as_bytes(),
                     ctx.func_ctx.tz.tz,
@@ -1009,15 +997,14 @@ pub fn register(registry: &mut FunctionRegistry) {
         "try_to_timestamp",
         |_, _| FunctionDomain::Full,
         vectorize_with_builder_1_arg::<VariantType, NullableType<TimestampType>>(
-            |val, output, ctx| {
+            |v, output, ctx| {
                 if let Some(validity) = &ctx.validity {
                     if !validity.get_bit(output.len()) {
                         output.push_null();
                         return;
                     }
                 }
-                let val = as_str(val);
-                match val {
+                match cast_to_str(v) {
                     Some(val) => match string_to_timestamp(
                         val.as_bytes(),
                         ctx.func_ctx.tz.tz,
@@ -1045,7 +1032,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                         &name,
                         |_, _| FunctionDomain::MayThrow,
                         vectorize_with_builder_1_arg::<VariantType, NumberType<NUM_TYPE>>(
-                            move |val, output, ctx| {
+                            move |v, output, ctx| {
                                 if let Some(validity) = &ctx.validity {
                                     if !validity.get_bit(output.len()) {
                                         output.push(NUM_TYPE::default());
@@ -1055,11 +1042,11 @@ pub fn register(registry: &mut FunctionRegistry) {
                                 type Native = <NUM_TYPE as Number>::Native;
 
                                 let value: Option<Native> = if dest_type.is_float() {
-                                    to_f64(val).ok().and_then(num_traits::cast::cast)
+                                    cast_to_f64(val).and_then(num_traits::cast::cast)
                                 } else if dest_type.is_signed() {
-                                    to_i64(val).ok().and_then(num_traits::cast::cast)
+                                    cast_to_i64(val).and_then(num_traits::cast::cast)
                                 } else {
-                                    to_u64(val).ok().and_then(num_traits::cast::cast)
+                                    cast_to_u64(val).and_then(num_traits::cast::cast)
                                 };
                                 match value {
                                     Some(value) => output.push(value.into()),
@@ -1083,7 +1070,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                         vectorize_with_builder_1_arg::<
                             VariantType,
                             NullableType<NumberType<NUM_TYPE>>,
-                        >(move |val, output, ctx| {
+                        >(move |v, output, ctx| {
                             if let Some(validity) = &ctx.validity {
                                 if !validity.get_bit(output.len()) {
                                     output.push_null();
@@ -1091,7 +1078,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                 }
                             }
                             if dest_type.is_float() {
-                                if let Ok(value) = to_f64(val) {
+                                if let Ok(value) = cast_to_f64(v) {
                                     if let Some(new_value) = num_traits::cast::cast(value) {
                                         output.push(new_value);
                                     } else {
@@ -1101,7 +1088,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                     output.push_null();
                                 }
                             } else if dest_type.is_signed() {
-                                if let Ok(value) = to_i64(val) {
+                                if let Ok(value) = cast_to_i64(v) {
                                     if let Some(new_value) = num_traits::cast::cast(value) {
                                         output.push(new_value);
                                     } else {
@@ -1111,7 +1098,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                     output.push_null();
                                 }
                             } else {
-                                if let Ok(value) = to_u64(val) {
+                                if let Ok(value) = cast_to_u64(v) {
                                     if let Some(new_value) = num_traits::cast::cast(value) {
                                         output.push(new_value);
                                     } else {
@@ -1126,7 +1113,6 @@ pub fn register(registry: &mut FunctionRegistry) {
             }
         });
     }
-*/
 
     registry.register_passthrough_nullable_1_arg::<VariantType, StringType, _, _>(
         "json_pretty",
@@ -1167,3 +1153,95 @@ pub fn register(registry: &mut FunctionRegistry) {
 
 }
 
+
+
+// Extract string for string type, other types convert to JSON string.
+fn cast_to_string(v: &[u8]) -> String {
+    let raw_jsonb = RawJsonb(v);
+    match raw_jsonb.to_str() {
+        Ok(v) => v,
+        Err(_) => raw_jsonb.to_string(),
+    }
+}
+
+
+fn cast_to_str(v: &[u8]) -> Option<String> {
+    match RawJsonb(v).to_str() {
+        Ok(val) => {
+            return val;
+        }
+        Err(err) => {
+            if err.to_string() == "InvalidJsonb" {
+                if let Ok(val) = parse_value(v) {
+                    return val.to_str();
+                }
+            }
+        }
+    }
+    None
+}
+
+fn cast_to_bool(v: &[u8]) -> Option<bool> {
+    match RawJsonb(v).to_bool() {
+        Ok(val) => {
+            return val;
+        }
+        Err(err) => {
+            if err.to_string() == "InvalidJsonb" {
+                if let Ok(val) = parse_value(v) {
+                    return val.to_bool();
+                }
+            }
+        }
+    }
+    None
+}
+
+
+fn cast_to_i64(v: &[u8]) -> Option<i64> {
+    match RawJsonb(v).to_i64() {
+        Ok(val) => {
+            return val;
+        }
+        Err(err) => {
+            if err.to_string() == "InvalidJsonb" {
+                if let Ok(val) = parse_value(v) {
+                    return val.to_i64();
+                }
+            }
+        }
+    }
+    None
+}
+
+fn cast_to_u64(v: &[u8]) -> Option<u64> {
+    match RawJsonb(v).to_u64() {
+        Ok(val) => {
+            return val;
+        }
+        Err(err) => {
+            if err.to_string() == "InvalidJsonb" {
+                if let Ok(val) = parse_value(v) {
+                    return val.to_u64();
+                }
+            }
+        }
+    }
+    None
+}
+
+fn cast_to_i64(v: &[u8]) -> Option<f64> {
+    match RawJsonb(v).to_f64() {
+        Ok(val) => {
+            return val;
+        }
+        Err(err) => {
+            if err.to_string() == "InvalidJsonb" {
+                if let Ok(val) = parse_value(v) {
+                    return val.to_f64();
+                }
+            }
+        }
+    }
+    None
+}
