@@ -1141,14 +1141,188 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             if let Err(err) = RawJsonb(val).strip_nulls(&mut output.data) {
+                // todo
                 ctx.set_error(output.len(), err.to_string());
             };
             output.commit_row();
         }),
     );
 
+    registry.register_passthrough_nullable_2_arg(
+        "concat",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, VariantType, VariantType>(
+            |left, right, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.commit_row();
+                        return;
+                    }
+                }
+                let left_val = RawJsonb(left);
+                let right_val = RawJsonb(right);
+                if let Err(err) = left_val.concat(right_val, &mut output.data) {
+                    ctx.set_error(output.len(), err.to_string());
+                };
+                output.commit_row();
+            },
+        ),
+    );
 
+    registry.register_passthrough_nullable_2_arg(
+        "minus",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, Int32Type, VariantType>(
+            |val, index, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.commit_row();
+                        return;
+                    }
+                }
+                if let Err(err) = RawJsonb(val).delete_by_index(index, &mut output.data) {
+                    ctx.set_error(output.len(), err.to_string());
+                };
+                output.commit_row();
+            },
+        ),
+    );
 
+    registry.register_passthrough_nullable_2_arg(
+        "minus",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, StringType, VariantType>(
+            |val, name, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.commit_row();
+                        return;
+                    }
+                }
+                if let Err(err) = RawJsonb(val).delete_by_name(name, &mut output.data) {
+                    ctx.set_error(output.len(), err.to_string());
+                };
+                output.commit_row();
+            },
+        ),
+    );
+
+    registry.register_passthrough_nullable_3_arg::<VariantType, Int32Type, VariantType, VariantType, _, _>(
+        "json_array_insert",
+        |_, _, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_3_arg::<VariantType, Int32Type, VariantType, VariantType>(
+            |val, pos, new_val, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.commit_row();
+                        return;
+                    }
+                }
+                let new_value = RawJsonb(new_val);
+                match RawJsonb(val).array_insert(pos, new_value, &mut output.data) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        ctx.set_error(output.len(), err.to_string());
+                    }
+                }
+                output.commit_row();
+            },
+        ),
+    );
+
+    registry.register_passthrough_nullable_1_arg::<VariantType, VariantType, _, _>(
+        "json_array_distinct",
+        |_, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_1_arg::<VariantType, VariantType>(|val, output, ctx| {
+            if let Some(validity) = &ctx.validity {
+                if !validity.get_bit(output.len()) {
+                    output.commit_row();
+                    return;
+                }
+            }
+            match RawJsonb(val).array_distinct(&mut output.data) {
+                Ok(_) => {}
+                Err(err) => {
+                    ctx.set_error(output.len(), err.to_string());
+                }
+            }
+            output.commit_row();
+        }),
+    );
+
+    registry.register_passthrough_nullable_2_arg::<VariantType, VariantType, VariantType, _, _>(
+        "json_array_intersection",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, VariantType, VariantType>(
+            |left, right, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.commit_row();
+                        return;
+                    }
+                }
+                let left_val = RawJsonb(left);
+                let right_val = RawJsonb(right);
+                match left_val.array_intersection(right_val, &mut output.data) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        ctx.set_error(output.len(), err.to_string());
+                    }
+                }
+                output.commit_row();
+            },
+        ),
+    );
+
+    registry.register_passthrough_nullable_2_arg::<VariantType, VariantType, VariantType, _, _>(
+        "json_array_except",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, VariantType, VariantType>(
+            |left, right, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.commit_row();
+                        return;
+                    }
+                }
+                let left_val = RawJsonb(left);
+                let right_val = RawJsonb(right);
+                match left_val.array_except(right_val, &mut output.data) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        ctx.set_error(output.len(), err.to_string());
+                    }
+                }
+                output.commit_row();
+            },
+        ),
+    );
+
+    registry.register_passthrough_nullable_2_arg::<VariantType, VariantType, BooleanType, _, _>(
+        "json_array_overlap",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, VariantType, BooleanType>(
+            |left, right, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.push(false);
+                        return;
+                    }
+                }
+                let left_val = RawJsonb(left);
+                let right_val = RawJsonb(right);
+                match left_val.array_overlap(right_val) {
+                    Ok(res) => {
+                        output.push(res);
+                    }
+                    Err(err) => {
+                        output.push(false);
+                        ctx.set_error(output.len(), err.to_string());
+                    }
+                }
+            },
+        ),
+    );
 
 
 }
@@ -1244,3 +1418,4 @@ fn cast_to_f64(v: &[u8]) -> Result<f64, jsonb::Error> {
         }
     }
 }
+
