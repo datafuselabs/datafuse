@@ -842,8 +842,8 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             match cast_to_bool(v) {
-                Some(res) => output.push(res),
-                None => {
+                Ok(res) => output.push(res),
+                Err(_) => {
                     ctx.set_error(output.len(), "unable to cast to type `BOOLEAN`");
                     output.push(false);
                 }
@@ -863,8 +863,8 @@ pub fn register(registry: &mut FunctionRegistry) {
                     }
                 }
                 match cast_to_bool(v) {
-                    Some(res) => output.push(res),
-                    None => output.push_null(),
+                    Ok(res) => output.push(res),
+                    Err(_) => output.push_null(),
                 }
             },
         ),
@@ -914,7 +914,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             match cast_to_str(v) {
-                Some(val) => match string_to_date(
+                Ok(val) => match string_to_date(
                     val.as_bytes(),
                     ctx.func_ctx.tz.tz,
                     ctx.func_ctx.enable_dst_hour_fix,
@@ -928,7 +928,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                         output.push(0);
                     }
                 },
-                None => {
+                Err(_) => {
                     ctx.set_error(output.len(), "unable to cast to type `DATE`");
                     output.push(0);
                 }
@@ -947,7 +947,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             match cast_to_str(v) {
-                Some(val) => match string_to_date(
+                Ok(val) => match string_to_date(
                     val.as_bytes(),
                     ctx.func_ctx.tz.tz,
                     ctx.func_ctx.enable_dst_hour_fix,
@@ -955,7 +955,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                     Ok(d) => output.push(d.num_days_from_ce() - EPOCH_DAYS_FROM_CE),
                     Err(_) => output.push_null(),
                 },
-                None => output.push_null(),
+                Err(_) => output.push_null(),
             }
         }),
     );
@@ -971,7 +971,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             match cast_to_str(v) {
-                Some(val) => match string_to_timestamp(
+                Ok(val) => match string_to_timestamp(
                     val.as_bytes(),
                     ctx.func_ctx.tz.tz,
                     ctx.func_ctx.enable_dst_hour_fix,
@@ -985,7 +985,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                         output.push(0);
                     }
                 },
-                None => {
+                Err(_) => {
                     ctx.set_error(output.len(), "unable to cast to type `TIMESTAMP`");
                     output.push(0);
                 }
@@ -1005,7 +1005,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                     }
                 }
                 match cast_to_str(v) {
-                    Some(val) => match string_to_timestamp(
+                    Ok(val) => match string_to_timestamp(
                         val.as_bytes(),
                         ctx.func_ctx.tz.tz,
                         ctx.func_ctx.enable_dst_hour_fix,
@@ -1015,7 +1015,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                             output.push_null();
                         }
                     },
-                    None => {
+                    Err(_) => {
                         output.push_null();
                     }
                 }
@@ -1042,11 +1042,11 @@ pub fn register(registry: &mut FunctionRegistry) {
                                 type Native = <NUM_TYPE as Number>::Native;
 
                                 let value: Option<Native> = if dest_type.is_float() {
-                                    cast_to_f64(val).and_then(num_traits::cast::cast)
+                                    cast_to_f64(v).ok().and_then(num_traits::cast::cast)
                                 } else if dest_type.is_signed() {
-                                    cast_to_i64(val).and_then(num_traits::cast::cast)
+                                    cast_to_i64(v).ok().and_then(num_traits::cast::cast)
                                 } else {
-                                    cast_to_u64(val).and_then(num_traits::cast::cast)
+                                    cast_to_u64(v).ok().and_then(num_traits::cast::cast)
                                 };
                                 match value {
                                     Some(value) => output.push(value.into()),
@@ -1164,11 +1164,10 @@ fn cast_to_string(v: &[u8]) -> String {
     }
 }
 
-
-fn cast_to_str(v: &[u8]) -> Option<String> {
+fn cast_to_str(v: &[u8]) -> Result<String, jsonb::Error> {
     match RawJsonb(v).to_str() {
         Ok(val) => {
-            return val;
+            Ok(val)
         }
         Err(err) => {
             if err.to_string() == "InvalidJsonb" {
@@ -1176,15 +1175,15 @@ fn cast_to_str(v: &[u8]) -> Option<String> {
                     return val.to_str();
                 }
             }
+            Err(err)
         }
     }
-    None
 }
 
-fn cast_to_bool(v: &[u8]) -> Option<bool> {
+fn cast_to_bool(v: &[u8]) -> Result<bool, jsonb::Error> {
     match RawJsonb(v).to_bool() {
         Ok(val) => {
-            return val;
+            Ok(val)
         }
         Err(err) => {
             if err.to_string() == "InvalidJsonb" {
@@ -1192,16 +1191,16 @@ fn cast_to_bool(v: &[u8]) -> Option<bool> {
                     return val.to_bool();
                 }
             }
+            Err(err)
         }
     }
-    None
 }
 
 
-fn cast_to_i64(v: &[u8]) -> Option<i64> {
+fn cast_to_i64(v: &[u8]) -> Result<i64, jsonb::Error> {
     match RawJsonb(v).to_i64() {
         Ok(val) => {
-            return val;
+            Ok(val)
         }
         Err(err) => {
             if err.to_string() == "InvalidJsonb" {
@@ -1209,15 +1208,15 @@ fn cast_to_i64(v: &[u8]) -> Option<i64> {
                     return val.to_i64();
                 }
             }
+            Err(err)
         }
     }
-    None
 }
 
-fn cast_to_u64(v: &[u8]) -> Option<u64> {
+fn cast_to_u64(v: &[u8]) -> Result<u64, jsonb::Error> {
     match RawJsonb(v).to_u64() {
         Ok(val) => {
-            return val;
+            Ok(val)
         }
         Err(err) => {
             if err.to_string() == "InvalidJsonb" {
@@ -1225,15 +1224,15 @@ fn cast_to_u64(v: &[u8]) -> Option<u64> {
                     return val.to_u64();
                 }
             }
+            Err(err)
         }
     }
-    None
 }
 
-fn cast_to_i64(v: &[u8]) -> Option<f64> {
+fn cast_to_f64(v: &[u8]) -> Result<f64, jsonb::Error> {
     match RawJsonb(v).to_f64() {
         Ok(val) => {
-            return val;
+            Ok(val)
         }
         Err(err) => {
             if err.to_string() == "InvalidJsonb" {
@@ -1241,7 +1240,7 @@ fn cast_to_i64(v: &[u8]) -> Option<f64> {
                     return val.to_f64();
                 }
             }
+            Err(err)
         }
     }
-    None
 }
