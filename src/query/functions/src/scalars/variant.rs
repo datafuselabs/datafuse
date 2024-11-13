@@ -897,7 +897,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                     }
                 }
                 let json_str = cast_to_string(v);
-            	output.put_and_commit(json_str);
+            	output.push(&json_str);
             },
         ),
     );
@@ -1762,6 +1762,7 @@ fn prepare_args_columns(
     (columns, len_opt)
 }
 
+/**
 fn delete_by_keypath_fn(args: &[ValueRef<AnyType>], ctx: &mut EvalContext) -> Value<AnyType> {
     let scalar_keypath = match &args[1] {
         ValueRef::Scalar(ScalarRef::String(v)) => Some(parse_key_paths(v.as_bytes())),
@@ -2013,6 +2014,7 @@ where
         }
     }
 }
+*/
 
 fn json_object_insert_fn(
     args: &[ValueRef<AnyType>],
