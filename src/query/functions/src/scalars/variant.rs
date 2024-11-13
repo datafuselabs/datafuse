@@ -498,7 +498,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                             Err(_) => {
                                 ctx.set_error(
                                     output.len(),
-                                    format!("Invalid JSONB value '0x{}'", hex::encode(val)),
+                                    format!("Invalid JSONB value '0x{}'", hex::encode(v)),
                                 );
                                 output.push_null();
                             }
@@ -541,7 +541,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                             Err(_) => {
                                 ctx.set_error(
                                     output.len(),
-                                    format!("Invalid JSONB value '0x{}'", hex::encode(val)),
+                                    format!("Invalid JSONB value '0x{}'", hex::encode(v)),
                                 );
                                 output.push_null();
                             }
@@ -632,7 +632,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                             Err(_) => {
                                 ctx.set_error(
                                     output.len(),
-                                    format!("Invalid JSONB value '0x{}'", hex::encode(val)),
+                                    format!("Invalid JSONB value '0x{}'", hex::encode(v)),
                                 );
                                 output.push_null();
                             }
@@ -2173,7 +2173,7 @@ fn get_by_keypath_fn(
                                 }
                                 validity.push(true);
                             }
-                            None => validity.push(false),
+                            _ => validity.push(false),
                         },
                         _ => validity.push(false),
                     }
@@ -2205,7 +2205,7 @@ fn get_by_keypath_fn(
     }
 }
 
-fn path_predicate_fn<'a, P>(
+fn path_predicate_fn<'a>(
     args: &'a [ValueRef<AnyType>],
     ctx: &'a mut EvalContext,
     is_match: bool,
