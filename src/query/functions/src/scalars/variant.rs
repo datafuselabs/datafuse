@@ -881,8 +881,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
             }
             let json_str = cast_to_string(v);
-            output.put_str(&json_str);
-            output.commit_row();
+            output.put_and_commit(json_str);
         }),
     );
 
@@ -898,7 +897,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                     }
                 }
                 let json_str = cast_to_string(v);
-                output.push(&json_str);
+            	output.put_and_commit(json_str);
             },
         ),
     );
@@ -1761,6 +1760,258 @@ fn prepare_args_columns(
         columns.push(column);
     }
     (columns, len_opt)
+}
+
+fn delete_by_keypath_fn(args: &[ValueRef<AnyType>], ctx: &mut EvalContext) -> Value<AnyType> {
+    let scalar_keypath = match &args[1] {
+        ValueRef::Scalar(ScalarRef::String(v)) => Some(parse_key_paths(v.as_bytes())),
+        _ => None,
+    };
+    let len_opt = args.iter().find_map(|arg| match arg {
+        ValueRef::Column(col) => Some(col.len()),
+        _ => None,
+    });
+    let len = len_opt.unwrap_or(1);
+
+    let mut builder = BinaryColumnBuilder::with_capacity(len, len * 50);
+    let mut validity = MutableBitmap::with_capacity(len);
+
+    for idx in 0..len {
+        let keypath = match &args[1] {
+            ValueRef::Scalar(_) => Cow::Borrowed(&scalar_keypath),
+            ValueRef::Column(col) => {
+                let scalar = unsafe { col.index_unchecked(idx) };
+                let path = match scalar {
+                    ScalarRef::String(buf) => Some(parse_key_paths(buf.as_bytes())),
+                    _ => None,
+                };
+                Cow::Owned(path)
+            }
+        };
+        match keypath.as_ref() {
+            Some(result) => match result {
+                Ok(path) => {
+                    let json_row = match &args[0] {
+                        ValueRef::Scalar(scalar) => scalar.clone(),
+                        ValueRef::Column(col) => unsafe { col.index_unchecked(idx) },
+                    };
+                    match json_row {
+                        ScalarRef::Variant(json) => {
+                            match delete_by_keypath(json, path.paths.iter(), &mut builder.data) {
+                                Ok(_) => validity.push(true),
+                                Err(err) => {
+                                    ctx.set_error(builder.len(), err.to_string());
+                                    validity.push(false);
+                                }
+                            }
+                        }
+                        _ => validity.push(false),
+                    }
+                }
+                Err(err) => {
+                    ctx.set_error(builder.len(), err.to_string());
+                    validity.push(false);
+                }
+            },
+            None => validity.push(false),
+        }
+        builder.commit_row();
+    }
+
+    let validity: Bitmap = validity.into();
+
+    match len_opt {
+        Some(_) => Value::Column(Column::Variant(builder.build())).wrap_nullable(Some(validity)),
+        None => {
+            if !validity.get_bit(0) {
+                Value::Scalar(Scalar::Null)
+            } else {
+                Value::Scalar(Scalar::Variant(builder.build_scalar()))
+            }
+        }
+    }
+}
+
+fn get_by_keypath_fn(
+    args: &[ValueRef<AnyType>],
+    ctx: &mut EvalContext,
+    string_res: bool,
+) -> Value<AnyType> {
+    let scalar_keypath = match &args[1] {
+        ValueRef::Scalar(ScalarRef::String(v)) => Some(parse_key_paths(v.as_bytes())),
+        _ => None,
+    };
+    let len_opt = args.iter().find_map(|arg| match arg {
+        ValueRef::Column(col) => Some(col.len()),
+        _ => None,
+    });
+    let len = len_opt.unwrap_or(1);
+
+    let mut builder = if string_res {
+        ColumnBuilder::String(StringColumnBuilder::with_capacity(len))
+    } else {
+        ColumnBuilder::Variant(BinaryColumnBuilder::with_capacity(len, len * 50))
+    };
+
+    let mut validity = MutableBitmap::with_capacity(len);
+
+    for idx in 0..len {
+        let keypath = match &args[1] {
+            ValueRef::Scalar(_) => Cow::Borrowed(&scalar_keypath),
+            ValueRef::Column(col) => {
+                let scalar = unsafe { col.index_unchecked(idx) };
+                let path = match scalar {
+                    ScalarRef::String(buf) => Some(parse_key_paths(buf.as_bytes())),
+                    _ => None,
+                };
+                Cow::Owned(path)
+            }
+        };
+
+        match keypath.as_ref() {
+            Some(result) => match result {
+                Ok(path) => {
+                    let json_row = match &args[0] {
+                        ValueRef::Scalar(scalar) => scalar.clone(),
+                        ValueRef::Column(col) => unsafe { col.index_unchecked(idx) },
+                    };
+                    match json_row {
+                        ScalarRef::Variant(json) => match get_by_keypath(json, path.paths.iter()) {
+                            Some(res) => {
+                                match &mut builder {
+                                    ColumnBuilder::String(builder) => {
+                                        let json_str = cast_to_string(&res);
+                                        builder.put_str(&json_str);
+                                    }
+                                    ColumnBuilder::Variant(builder) => {
+                                        builder.put_slice(&res);
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                validity.push(true);
+                            }
+                            None => validity.push(false),
+                        },
+                        _ => validity.push(false),
+                    }
+                }
+                Err(err) => {
+                    ctx.set_error(builder.len(), err.to_string());
+                    validity.push(false);
+                }
+            },
+            None => validity.push(false),
+        }
+
+        match &mut builder {
+            ColumnBuilder::String(builder) => {
+                builder.commit_row();
+            }
+            ColumnBuilder::Variant(builder) => {
+                builder.commit_row();
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    let builder = ColumnBuilder::Nullable(Box::new(NullableColumnBuilder { builder, validity }));
+
+    match len_opt {
+        Some(_) => Value::Column(builder.build()),
+        None => Value::Scalar(builder.build_scalar()),
+    }
+}
+
+fn path_predicate_fn<'a, P>(
+    args: &'a [ValueRef<AnyType>],
+    ctx: &'a mut EvalContext,
+    predicate: P,
+) -> Value<AnyType>
+where
+    P: Fn(&'a [u8], JsonPath<'a>) -> Result<bool, jsonb::Error>,
+{
+    let scalar_jsonpath = match &args[1] {
+        ValueRef::Scalar(ScalarRef::String(v)) => {
+            let res = parse_json_path(v.as_bytes()).map_err(|_| format!("Invalid JSON Path '{v}'"));
+            Some(res)
+        }
+        _ => None,
+    };
+
+    let len_opt = args.iter().find_map(|arg| match arg {
+        ValueRef::Column(col) => Some(col.len()),
+        _ => None,
+    });
+    let len = len_opt.unwrap_or(1);
+
+    let mut output = MutableBitmap::with_capacity(len);
+    let mut validity = MutableBitmap::with_capacity(len);
+
+    for idx in 0..len {
+        let jsonpath = match &args[1] {
+            ValueRef::Scalar(_) => scalar_jsonpath.clone(),
+            ValueRef::Column(col) => {
+                let scalar = unsafe { col.index_unchecked(idx) };
+                match scalar {
+                    ScalarRef::String(buf) => {
+                        let res = parse_json_path(buf.as_bytes())
+                            .map_err(|_| format!("Invalid JSON Path '{buf}'"));
+                        Some(res)
+                    }
+                    _ => None,
+                }
+            }
+        };
+        match jsonpath {
+            Some(result) => match result {
+                Ok(path) => {
+                    let json_row = match &args[0] {
+                        ValueRef::Scalar(scalar) => scalar.clone(),
+                        ValueRef::Column(col) => unsafe { col.index_unchecked(idx) },
+                    };
+                    match json_row {
+                        ScalarRef::Variant(json) => match predicate(json, path) {
+                            Ok(r) => {
+                                output.push(r);
+                                validity.push(true);
+                            }
+                            Err(err) => {
+                                ctx.set_error(output.len(), err.to_string());
+                                output.push(false);
+                                validity.push(false);
+                            }
+                        },
+                        _ => {
+                            output.push(false);
+                            validity.push(false);
+                        }
+                    }
+                }
+                Err(err) => {
+                    ctx.set_error(output.len(), err);
+                    output.push(false);
+                    validity.push(false);
+                }
+            },
+            None => {
+                output.push(false);
+                validity.push(false);
+            }
+        }
+    }
+
+    let validity: Bitmap = validity.into();
+
+    match len_opt {
+        Some(_) => Value::Column(Column::Boolean(output.into())).wrap_nullable(Some(validity)),
+        None => {
+            if !validity.get_bit(0) {
+                Value::Scalar(Scalar::Null)
+            } else {
+                Value::Scalar(Scalar::Boolean(output.get(0)))
+            }
+        }
+    }
 }
 
 fn json_object_insert_fn(
