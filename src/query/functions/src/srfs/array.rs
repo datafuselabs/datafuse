@@ -27,7 +27,7 @@ use databend_common_expression::Scalar;
 use databend_common_expression::ScalarRef;
 use databend_common_expression::Value;
 
-//use crate::srfs::variant::unnest_variant_array;
+use crate::srfs::variant::unnest_variant_array;
 
 pub fn register(registry: &mut FunctionRegistry) {
     registry.properties.insert(
@@ -116,8 +116,7 @@ fn build_unnest(
                                     (Value::Scalar(Scalar::Tuple(vec![Scalar::Null])), 0)
                                 }
                                 ScalarRef::Variant(val) => {
-                                    //unnest_variant_array(val, row, max_nums_per_row)
-                                    todo!()
+                                    unnest_variant_array(val, row, max_nums_per_row)
                                 }
                                 ScalarRef::Array(col) => {
                                     let unnest_array = unnest_column(col);
