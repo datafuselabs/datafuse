@@ -244,8 +244,51 @@ pub fn register(registry: &mut FunctionRegistry) {
         }),
     );
 
-    // get_by_keypath
-    // get_by_keypath_string
+    registry.register_function_factory("get_by_keypath", |_, args_type| {
+        if args_type.len() != 2 {
+            return None;
+        }
+        if (args_type[0].remove_nullable() != DataType::Variant && args_type[0] != DataType::Null)
+            || (args_type[1].remove_nullable() != DataType::String
+                && args_type[1] != DataType::Null)
+        {
+            return None;
+        }
+        Some(Arc::new(Function {
+            signature: FunctionSignature {
+                name: "get_by_keypath".to_string(),
+                args_type: args_type.to_vec(),
+                return_type: DataType::Nullable(Box::new(DataType::Variant)),
+            },
+            eval: FunctionEval::Scalar {
+                calc_domain: Box::new(|_, _| FunctionDomain::MayThrow),
+                eval: Box::new(|args, ctx| get_by_keypath_fn(args, ctx, false)),
+            },
+        }))
+    });
+
+    registry.register_function_factory("get_by_keypath_string", |_, args_type| {
+        if args_type.len() != 2 {
+            return None;
+        }
+        if (args_type[0].remove_nullable() != DataType::Variant && args_type[0] != DataType::Null)
+            || (args_type[1].remove_nullable() != DataType::String
+                && args_type[1] != DataType::Null)
+        {
+            return None;
+        }
+        Some(Arc::new(Function {
+            signature: FunctionSignature {
+                name: "get_by_keypath_string".to_string(),
+                args_type: args_type.to_vec(),
+                return_type: DataType::Nullable(Box::new(DataType::String)),
+            },
+            eval: FunctionEval::Scalar {
+                calc_domain: Box::new(|_, _| FunctionDomain::MayThrow),
+                eval: Box::new(|args, ctx| get_by_keypath_fn(args, ctx, true)),
+            },
+        }))
+    });
 
 
     registry.register_combine_nullable_2_arg::<VariantType, StringType, VariantType, _, _>(
@@ -427,13 +470,234 @@ pub fn register(registry: &mut FunctionRegistry) {
         ),
     );
 
-    // json_path_query_array
-    // json_path_query_first
-    // json_path_match
-    // json_path_exists
-    // get_path
-    // json_extract_path_text
+    registry.register_combine_nullable_2_arg::<VariantType, StringType, VariantType, _, _>(
+        "json_path_query_array",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, StringType, NullableType<VariantType>>(
+            |v, path, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.push_null();
+                        return;
+                    }
+                }
+                match parse_json_path(path.as_bytes()) {
+                    Ok(json_path) => {
+                        match RawJsonb(v).get_by_path_array(
+                            json_path,
+                            &mut output.builder.data,
+                            &mut output.builder.offsets,
+                        ) {
+                            Ok(()) => {
+                                if output.builder.offsets.len() == output.len() + 1 {
+                                    output.push_null();
+                                } else {
+                                    output.validity.push(true);
+                                }
+                            }
+                            Err(_) => {
+                                ctx.set_error(
+                                    output.len(),
+                                    format!("Invalid JSONB value '0x{}'", hex::encode(val)),
+                                );
+                                output.push_null();
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        ctx.set_error(output.len(), format!("Invalid JSON Path '{path}'"));
+                        output.push_null();
+                    }
+                }
+            },
+        ),
+    );
 
+    registry.register_combine_nullable_2_arg::<VariantType, StringType, VariantType, _, _>(
+        "json_path_query_first",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, StringType, NullableType<VariantType>>(
+            |v, path, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.push_null();
+                        return;
+                    }
+                }
+                match parse_json_path(path.as_bytes()) {
+                    Ok(json_path) => {
+                        match RawJsonb(v).get_by_path_first(
+                            json_path,
+                            &mut output.builder.data,
+                            &mut output.builder.offsets,
+                        ) {
+                            Ok(()) => {
+                                if output.builder.offsets.len() == output.len() + 1 {
+                                    output.push_null();
+                                } else {
+                                    output.validity.push(true);
+                                }
+                            }
+                            Err(_) => {
+                                ctx.set_error(
+                                    output.len(),
+                                    format!("Invalid JSONB value '0x{}'", hex::encode(val)),
+                                );
+                                output.push_null();
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        ctx.set_error(output.len(), format!("Invalid JSON Path '{path}'"));
+                        output.push_null();
+                    }
+                }
+            },
+        ),
+    );
+
+    registry.register_function_factory("json_path_match", |_, args_type| {
+        if args_type.len() != 2 {
+            return None;
+        }
+        if (args_type[0].remove_nullable() != DataType::Variant && args_type[0] != DataType::Null)
+            || (args_type[1].remove_nullable() != DataType::String
+                && args_type[1] != DataType::Null)
+        {
+            return None;
+        }
+        Some(Arc::new(Function {
+            signature: FunctionSignature {
+                name: "json_path_match".to_string(),
+                args_type: args_type.to_vec(),
+                return_type: DataType::Nullable(Box::new(DataType::Boolean)),
+            },
+            eval: FunctionEval::Scalar {
+                calc_domain: Box::new(|_, _| FunctionDomain::MayThrow),
+                eval: Box::new(|args, ctx| path_predicate_fn(args, ctx, true)),
+            },
+        }))
+    });
+
+    registry.register_function_factory("json_path_exists", |_, args_type| {
+        if args_type.len() != 2 {
+            return None;
+        }
+        if (args_type[0].remove_nullable() != DataType::Variant && args_type[0] != DataType::Null)
+            || (args_type[1].remove_nullable() != DataType::String
+                && args_type[1] != DataType::Null)
+        {
+            return None;
+        }
+        Some(Arc::new(Function {
+            signature: FunctionSignature {
+                name: "json_path_exists".to_string(),
+                args_type: args_type.to_vec(),
+                return_type: DataType::Nullable(Box::new(DataType::Boolean)),
+            },
+            eval: FunctionEval::Scalar {
+                calc_domain: Box::new(|_, _| FunctionDomain::Full),
+                eval: Box::new(|args, ctx| {
+                    path_predicate_fn(args, ctx, false)
+                }),
+            },
+        }))
+    });
+
+    registry.register_combine_nullable_2_arg::<VariantType, StringType, VariantType, _, _>(
+        "get_path",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<VariantType, StringType, NullableType<VariantType>>(
+            |v, path, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.push_null();
+                        return;
+                    }
+                }
+                match parse_json_path(path.as_bytes()) {
+                    Ok(json_path) => {
+                        match RawJsonb(v).get_by_path(
+                            json_path,
+                            &mut output.builder.data,
+                            &mut output.builder.offsets,
+                        ) {
+                            Ok(()) => {
+                                if output.builder.offsets.len() == output.len() + 1 {
+                                    output.push_null();
+                                } else {
+                                    output.validity.push(true);
+                                }
+                            }
+                            Err(_) => {
+                                ctx.set_error(
+                                    output.len(),
+                                    format!("Invalid JSONB value '0x{}'", hex::encode(val)),
+                                );
+                                output.push_null();
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        ctx.set_error(output.len(), format!("Invalid JSON Path '{path}'"));
+                        output.push_null();
+                    }
+                }
+            },
+        ),
+    );
+
+    registry.register_combine_nullable_2_arg::<StringType, StringType, StringType, _, _>(
+        "json_extract_path_text",
+        |_, _, _| FunctionDomain::MayThrow,
+        vectorize_with_builder_2_arg::<StringType, StringType, NullableType<StringType>>(
+            |s, path, output, ctx| {
+                if let Some(validity) = &ctx.validity {
+                    if !validity.get_bit(output.len()) {
+                        output.push_null();
+                        return;
+                    }
+                }
+                match parse_value(s.as_bytes()) {
+                    Ok(val) => {
+                        let mut buf = Vec::new();
+                        val.write_to_vec(&mut buf);
+                        match parse_json_path(path.as_bytes()) {
+                            Ok(json_path) => {
+                                let mut out_buf = Vec::new();
+                                let mut out_offsets = Vec::new();
+                                match RawJsonb(&buf).get_by_path(json_path, &mut out_buf, &mut out_offsets) {
+                                    Ok(()) => {
+                                        if out_offsets.is_empty() {
+                                            output.push_null();
+                                        } else {
+                                            let json_str = cast_to_string(&out_buf);
+                                            output.push(&json_str);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        ctx.set_error(
+                                            output.len(),
+                                            format!("Invalid JSONB value '0x{}'", hex::encode(buf)),
+                                        );
+                                        output.push_null();
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                ctx.set_error(output.len(), format!("Invalid JSON Path '{path}'"));
+                                output.push_null();
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        ctx.set_error(output.len(), err.to_string());
+                        output.push_null();
+                    }
+                }
+            },
+        ),
+    );
 
     registry.register_combine_nullable_1_arg::<VariantType, BooleanType, _, _>(
         "as_boolean",
@@ -1323,9 +1587,28 @@ pub fn register(registry: &mut FunctionRegistry) {
         ),
     );
 
-    // todo
-    // delete_by_keypath
-
+    registry.register_function_factory("delete_by_keypath", |_, args_type| {
+        if args_type.len() != 2 {
+            return None;
+        }
+        if (args_type[0].remove_nullable() != DataType::Variant && args_type[0] != DataType::Null)
+            || (args_type[1].remove_nullable() != DataType::String
+                && args_type[1] != DataType::Null)
+        {
+            return None;
+        }
+        Some(Arc::new(Function {
+            signature: FunctionSignature {
+                name: "delete_by_keypath".to_string(),
+                args_type: args_type.to_vec(),
+                return_type: DataType::Nullable(Box::new(DataType::Variant)),
+            },
+            eval: FunctionEval::Scalar {
+                calc_domain: Box::new(|_, _| FunctionDomain::MayThrow),
+                eval: Box::new(delete_by_keypath_fn),
+            },
+        }))
+    });
 
     registry.register_passthrough_nullable_1_arg(
         "json_typeof",
@@ -1762,7 +2045,6 @@ fn prepare_args_columns(
     (columns, len_opt)
 }
 
-/**
 fn delete_by_keypath_fn(args: &[ValueRef<AnyType>], ctx: &mut EvalContext) -> Value<AnyType> {
     let scalar_keypath = match &args[1] {
         ValueRef::Scalar(ScalarRef::String(v)) => Some(parse_key_paths(v.as_bytes())),
@@ -1797,8 +2079,8 @@ fn delete_by_keypath_fn(args: &[ValueRef<AnyType>], ctx: &mut EvalContext) -> Va
                         ValueRef::Column(col) => unsafe { col.index_unchecked(idx) },
                     };
                     match json_row {
-                        ScalarRef::Variant(json) => {
-                            match delete_by_keypath(json, path.paths.iter(), &mut builder.data) {
+                        ScalarRef::Variant(v) => {
+                            match RawJsonb(v).delete_by_keypath(path.paths.iter(), &mut builder.data) {
                                 Ok(_) => validity.push(true),
                                 Err(err) => {
                                     ctx.set_error(builder.len(), err.to_string());
@@ -1877,8 +2159,8 @@ fn get_by_keypath_fn(
                         ValueRef::Column(col) => unsafe { col.index_unchecked(idx) },
                     };
                     match json_row {
-                        ScalarRef::Variant(json) => match get_by_keypath(json, path.paths.iter()) {
-                            Some(res) => {
+                        ScalarRef::Variant(v) => match RawJsonb(v).get_by_keypath(path.paths.iter()) {
+                            Ok(Some(res)) => {
                                 match &mut builder {
                                     ColumnBuilder::String(builder) => {
                                         let json_str = cast_to_string(&res);
@@ -1926,11 +2208,8 @@ fn get_by_keypath_fn(
 fn path_predicate_fn<'a, P>(
     args: &'a [ValueRef<AnyType>],
     ctx: &'a mut EvalContext,
-    predicate: P,
-) -> Value<AnyType>
-where
-    P: Fn(&'a [u8], JsonPath<'a>) -> Result<bool, jsonb::Error>,
-{
+    is_match: bool,
+) -> Value<AnyType> {
     let scalar_jsonpath = match &args[1] {
         ValueRef::Scalar(ScalarRef::String(v)) => {
             let res = parse_json_path(v.as_bytes()).map_err(|_| format!("Invalid JSON Path '{v}'"));
@@ -1971,15 +2250,23 @@ where
                         ValueRef::Column(col) => unsafe { col.index_unchecked(idx) },
                     };
                     match json_row {
-                        ScalarRef::Variant(json) => match predicate(json, path) {
-                            Ok(r) => {
-                                output.push(r);
-                                validity.push(true);
-                            }
-                            Err(err) => {
-                                ctx.set_error(output.len(), err.to_string());
-                                output.push(false);
-                                validity.push(false);
+                        ScalarRef::Variant(v) => {
+                            let jsonb = RawJsonb(v);
+                            let res = if is_match {
+                                jsonb.path_match(path)
+                            } else {
+                                jsonb.path_exists(path)
+                            };
+                            match res {
+                                Ok(r) => {
+                                    output.push(r);
+                                    validity.push(true);
+                                }
+                                Err(err) => {
+                                    ctx.set_error(output.len(), err.to_string());
+                                    output.push(false);
+                                    validity.push(false);
+                                }
                             }
                         },
                         _ => {
@@ -2014,7 +2301,6 @@ where
         }
     }
 }
-*/
 
 fn json_object_insert_fn(
     args: &[ValueRef<AnyType>],
