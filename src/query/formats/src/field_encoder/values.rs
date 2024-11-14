@@ -43,10 +43,10 @@ use geozero::ToGeos;
 use geozero::ToJson;
 use geozero::ToWkb;
 use geozero::ToWkt;
+use jsonb::RawJsonb;
 use lexical_core::ToLexical;
 use micromarshal::Marshal;
 use micromarshal::Unmarshal;
-use jsonb::RawJsonb;
 
 use crate::field_encoder::helpers::write_quoted_string;
 use crate::field_encoder::helpers::PrimitiveWithFormat;

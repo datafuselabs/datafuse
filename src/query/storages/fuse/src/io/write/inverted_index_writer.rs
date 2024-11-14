@@ -16,7 +16,6 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use jsonb::RawJsonb;
 use arrow_ipc::writer::write_message;
 use arrow_ipc::writer::IpcDataGenerator;
 use arrow_ipc::writer::IpcWriteOptions;
@@ -35,6 +34,7 @@ use databend_common_expression::Value;
 use databend_common_io::constants::DEFAULT_BLOCK_BUFFER_SIZE;
 use databend_storages_common_index::extract_component_fields;
 use databend_storages_common_index::extract_fsts;
+use jsonb::RawJsonb;
 use tantivy::indexer::UserOperation;
 use tantivy::schema::Field;
 use tantivy::schema::IndexRecordOption;

@@ -49,10 +49,10 @@ use jaq_interpret::RcIter;
 use jaq_interpret::Val;
 use jaq_parse;
 use jaq_std;
-use jsonb::RawJsonb;
 use jsonb::jsonpath::parse_json_path;
 use jsonb::jsonpath::Mode as SelectorMode;
 use jsonb::jsonpath::Selector;
+use jsonb::RawJsonb;
 
 pub fn register(registry: &mut FunctionRegistry) {
     registry.properties.insert(
@@ -432,7 +432,11 @@ pub fn register(registry: &mut FunctionRegistry) {
                                         // get inner input values by path
                                         let mut builder = BinaryColumnBuilder::with_capacity(0, 0);
                                         if selector
-                                            .select(&RawJsonb(val), &mut builder.data, &mut builder.offsets)
+                                            .select(
+                                                &RawJsonb(val),
+                                                &mut builder.data,
+                                                &mut builder.offsets,
+                                            )
                                             .is_err()
                                         {
                                             ctx.set_error(
@@ -992,4 +996,3 @@ impl FlattenGenerator {
         columns
     }
 }
-

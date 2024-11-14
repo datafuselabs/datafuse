@@ -29,10 +29,10 @@ use geozero::GeozeroGeometry;
 use geozero::ToGeos;
 use geozero::ToWkt;
 use itertools::Itertools;
+use jsonb::RawJsonb;
 use num_traits::FromPrimitive;
 use rust_decimal::Decimal;
 use rust_decimal::RoundingStrategy;
-use jsonb::RawJsonb;
 
 use crate::block::DataBlock;
 use crate::expression::Expr;

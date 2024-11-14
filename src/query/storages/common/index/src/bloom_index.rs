@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use jsonb::RawJsonb;
 use databend_common_arrow::arrow::bitmap::Bitmap;
 use databend_common_arrow::arrow::buffer::Buffer;
 use databend_common_ast::Span;
@@ -55,6 +54,7 @@ use databend_common_functions::BUILTIN_FUNCTIONS;
 use databend_storages_common_table_meta::meta::SingleColumnMeta;
 use databend_storages_common_table_meta::meta::StatisticsOfColumns;
 use databend_storages_common_table_meta::meta::Versioned;
+use jsonb::RawJsonb;
 use parquet::format::FileMetaData;
 
 use crate::filters::BlockBloomFilterIndexVersion;

@@ -16,7 +16,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use jsonb::RawJsonb;
 use databend_common_arrow::arrow::bitmap::MutableBitmap;
 use databend_common_expression::generate_like_pattern;
 use databend_common_expression::types::boolean::BooleanDomain;
@@ -50,6 +49,7 @@ use databend_common_expression::LikePattern;
 use databend_common_expression::ScalarRef;
 use databend_common_expression::SimpleDomainCmp;
 use databend_common_expression::ValueRef;
+use jsonb::RawJsonb;
 use regex::Regex;
 
 use crate::scalars::decimal::register_decimal_compare_op;
