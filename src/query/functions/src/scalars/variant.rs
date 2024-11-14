@@ -400,7 +400,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                 }
                 match RawJsonb(val).get_by_name(name, false) {
                     Ok(Some(v)) => {
-                        let json_str = RawJsonb(v).to_string();
+                        let json_str = cast_to_string(&v);
                         output.push(&json_str);
                     }
                     Ok(None) => output.push_null(),
@@ -435,7 +435,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                 } else {
                     match RawJsonb(val).get_by_index(idx as usize) {
                         Ok(Some(v)) => {
-                            let json_str = RawJsonb(v).to_string();
+                            let json_str = cast_to_string(&v);
                             output.push(&json_str);
                         }
                         Ok(None) => {
@@ -1076,8 +1076,8 @@ pub fn register(registry: &mut FunctionRegistry) {
             }
             match cast_to_bool(v) {
                 Ok(res) => output.push(res),
-                Err(_) => {
-                    ctx.set_error(output.len(), "unable to cast to type `BOOLEAN`");
+                Err(err) => {
+                    ctx.set_error(output.len(), err.to_string());
                     output.push(false);
                 }
             }
@@ -2529,3 +2529,4 @@ fn cast_to_f64(v: &[u8]) -> Result<f64, jsonb::Error> {
         }
     }
 }
+
