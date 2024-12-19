@@ -13,10 +13,8 @@
 // limitations under the License.
 
 use binary::BinaryColumnBuilder;
-use databend_common_arrow::arrow::array::Array;
-use databend_common_arrow::arrow::array::Utf8ViewArray;
-use databend_common_arrow::arrow::buffer::Buffer;
 use databend_common_base::vec_ext::VecExt;
+use databend_common_column::buffer::Buffer;
 use databend_common_exception::Result;
 
 use crate::types::binary::BinaryColumn;
@@ -80,7 +78,7 @@ impl<'a> TakeCompactVisitor<'a> {
     }
 }
 
-impl<'a> ValueVisitor for TakeCompactVisitor<'a> {
+impl ValueVisitor for TakeCompactVisitor<'_> {
     fn visit_scalar(&mut self, scalar: crate::Scalar) -> Result<()> {
         self.result = Some(Value::Scalar(scalar));
         Ok(())
@@ -177,7 +175,7 @@ impl<'a> ValueVisitor for TakeCompactVisitor<'a> {
     }
 }
 
-impl<'a> TakeCompactVisitor<'a> {
+impl TakeCompactVisitor<'_> {
     fn take_primitive_types<T: Copy>(&mut self, buffer: Buffer<T>) -> Buffer<T> {
         let buffer = buffer.as_slice();
         let mut builder: Vec<T> = Vec::with_capacity(self.num_rows);
@@ -231,16 +229,9 @@ impl<'a> TakeCompactVisitor<'a> {
     }
 
     fn take_string_types(&mut self, col: &StringColumn) -> StringColumn {
-        let new_views = self.take_primitive_types(col.data.views().clone());
-        let new_col = unsafe {
-            Utf8ViewArray::new_unchecked_unknown_md(
-                col.data.data_type().clone(),
-                new_views,
-                col.data.data_buffers().clone(),
-                None,
-                Some(col.data.total_buffer_len()),
-            )
-        };
-        StringColumn::new(new_col)
+        let new_views = self.take_primitive_types(col.views().clone());
+        unsafe {
+            StringColumn::new_unchecked_unknown_md(new_views, col.data_buffers().clone(), None)
+        }
     }
 }

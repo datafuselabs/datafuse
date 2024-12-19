@@ -85,7 +85,6 @@ impl Binder {
             aliases,
         );
         let (scalar, _) = scalar_binder.bind(expr)?;
-
         let f = |scalar: &ScalarExpr| {
             matches!(
                 scalar,
@@ -288,10 +287,11 @@ impl Binder {
         );
 
         if distinct {
+            let columns = new_bind_context.all_column_bindings().to_vec();
             new_expr = self.bind_distinct(
                 left_span,
-                &new_bind_context,
-                new_bind_context.all_column_bindings(),
+                &mut new_bind_context,
+                &columns,
                 &mut HashMap::new(),
                 new_expr,
             )?;
@@ -351,10 +351,11 @@ impl Binder {
         right_expr: SExpr,
         join_type: JoinType,
     ) -> Result<(SExpr, BindContext)> {
+        let columns = left_context.all_column_bindings().to_vec();
         let left_expr = self.bind_distinct(
             left_span,
-            &left_context,
-            left_context.all_column_bindings(),
+            &mut left_context,
+            &columns,
             &mut HashMap::new(),
             left_expr,
         )?;

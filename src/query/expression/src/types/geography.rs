@@ -19,7 +19,6 @@ use std::ops::Range;
 
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
-use databend_common_arrow::arrow::trusted_len::TrustedLen;
 use databend_common_exception::Result;
 use databend_common_io::geography::*;
 use databend_common_io::wkb::make_point;
@@ -30,7 +29,7 @@ use geozero::ToWkt;
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::binary::BinaryIterator;
+use super::binary::BinaryColumnIter;
 use crate::property::Domain;
 use crate::types::binary::BinaryColumn;
 use crate::types::binary::BinaryColumnBuilder;
@@ -67,7 +66,7 @@ impl Geography {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GeographyRef<'a>(pub &'a [u8]);
 
-impl<'a> GeographyRef<'a> {
+impl GeographyRef<'_> {
     pub fn to_owned(&self) -> Geography {
         Geography(self.0.to_owned())
     }
@@ -83,7 +82,7 @@ impl<'a> GeographyRef<'a> {
     }
 }
 
-impl<'a> AsRef<[u8]> for GeographyRef<'a> {
+impl AsRef<[u8]> for GeographyRef<'_> {
     fn as_ref(&self) -> &[u8] {
         self.0
     }
@@ -287,12 +286,12 @@ impl GeographyColumn {
     }
 
     pub fn check_valid(&self) -> Result<()> {
-        self.0.check_valid()
+        Ok(self.0.check_valid()?)
     }
 }
 
 pub struct GeographyIterator<'a> {
-    inner: BinaryIterator<'a>,
+    inner: BinaryColumnIter<'a>,
 }
 
 impl<'a> Iterator for GeographyIterator<'a> {
@@ -303,6 +302,4 @@ impl<'a> Iterator for GeographyIterator<'a> {
     }
 }
 
-unsafe impl<'a> TrustedLen for GeographyIterator<'a> {}
-
-unsafe impl<'a> std::iter::TrustedLen for GeographyIterator<'a> {}
+unsafe impl std::iter::TrustedLen for GeographyIterator<'_> {}

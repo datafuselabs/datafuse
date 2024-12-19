@@ -16,18 +16,19 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use databend_common_arrow::arrow::bitmap::MutableBitmap;
 use databend_common_expression::generate_like_pattern;
 use databend_common_expression::types::boolean::BooleanDomain;
 use databend_common_expression::types::string::StringDomain;
 use databend_common_expression::types::AnyType;
 use databend_common_expression::types::ArgType;
 use databend_common_expression::types::ArrayType;
+use databend_common_expression::types::Bitmap;
 use databend_common_expression::types::BooleanType;
 use databend_common_expression::types::DataType;
 use databend_common_expression::types::DateType;
 use databend_common_expression::types::EmptyArrayType;
 use databend_common_expression::types::GenericType;
+use databend_common_expression::types::MutableBitmap;
 use databend_common_expression::types::NumberClass;
 use databend_common_expression::types::NumberType;
 use databend_common_expression::types::StringColumn;
@@ -46,9 +47,9 @@ use databend_common_expression::FunctionEval;
 use databend_common_expression::FunctionRegistry;
 use databend_common_expression::FunctionSignature;
 use databend_common_expression::LikePattern;
+use databend_common_expression::Scalar;
 use databend_common_expression::ScalarRef;
 use databend_common_expression::SimpleDomainCmp;
-use databend_common_expression::ValueRef;
 use jsonb::RawJsonb;
 use regex::Regex;
 
@@ -80,42 +81,42 @@ const ALL_FALSE_DOMAIN: BooleanDomain = BooleanDomain {
 };
 
 fn register_variant_cmp(registry: &mut FunctionRegistry) {
-    registry.register_2_arg::<VariantType, VariantType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "eq",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
             jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") == Ordering::Equal
         },
     );
-    registry.register_2_arg::<VariantType, VariantType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "noteq",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
             jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") != Ordering::Equal
         },
     );
-    registry.register_2_arg::<VariantType, VariantType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "gt",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
             jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") == Ordering::Greater
         },
     );
-    registry.register_2_arg::<VariantType, VariantType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "gte",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
             jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") != Ordering::Less
         },
     );
-    registry.register_2_arg::<VariantType, VariantType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "lt",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
             jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") == Ordering::Less
         },
     );
-    registry.register_2_arg::<VariantType, VariantType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "lte",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
@@ -126,32 +127,32 @@ fn register_variant_cmp(registry: &mut FunctionRegistry) {
 
 macro_rules! register_simple_domain_type_cmp {
     ($registry:ident, $T:ty) => {
-        $registry.register_2_arg::<$T, $T, BooleanType, _, _>(
+        $registry.register_comparison_2_arg::<$T, $T, _, _>(
             "eq",
             |_, d1, d2| d1.domain_eq(d2),
             |lhs, rhs, _| lhs == rhs,
         );
-        $registry.register_2_arg::<$T, $T, BooleanType, _, _>(
+        $registry.register_comparison_2_arg::<$T, $T, _, _>(
             "noteq",
             |_, d1, d2| d1.domain_noteq(d2),
             |lhs, rhs, _| lhs != rhs,
         );
-        $registry.register_2_arg::<$T, $T, BooleanType, _, _>(
+        $registry.register_comparison_2_arg::<$T, $T, _, _>(
             "gt",
             |_, d1, d2| d1.domain_gt(d2),
             |lhs, rhs, _| lhs > rhs,
         );
-        $registry.register_2_arg::<$T, $T, BooleanType, _, _>(
+        $registry.register_comparison_2_arg::<$T, $T, _, _>(
             "gte",
             |_, d1, d2| d1.domain_gte(d2),
             |lhs, rhs, _| lhs >= rhs,
         );
-        $registry.register_2_arg::<$T, $T, BooleanType, _, _>(
+        $registry.register_comparison_2_arg::<$T, $T, _, _>(
             "lt",
             |_, d1, d2| d1.domain_lt(d2),
             |lhs, rhs, _| lhs < rhs,
         );
-        $registry.register_2_arg::<$T, $T, BooleanType, _, _>(
+        $registry.register_comparison_2_arg::<$T, $T, _, _>(
             "lte",
             |_, d1, d2| d1.domain_lte(d2),
             |lhs, rhs, _| lhs <= rhs,
@@ -194,30 +195,26 @@ fn register_string_cmp(registry: &mut FunctionRegistry) {
 
 fn vectorize_string_cmp(
     func: impl Fn(Ordering) -> bool + Copy,
-) -> impl Fn(ValueRef<StringType>, ValueRef<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy
-{
-    move |arg1, arg2, _ctx| match (arg1, arg2) {
-        (ValueRef::Scalar(arg1), ValueRef::Scalar(arg2)) => Value::Scalar(func(arg1.cmp(arg2))),
-        (ValueRef::Column(arg1), ValueRef::Scalar(arg2)) => {
-            let mut builder = MutableBitmap::with_capacity(arg1.len());
-            for i in 0..arg1.len() {
-                builder.push(func(StringColumn::compare_str(&arg1, i, arg2)));
-            }
-            Value::Column(builder.into())
+) -> impl Fn(Value<StringType>, Value<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy {
+    move |arg1, arg2, ctx| match (arg1, arg2) {
+        (Value::Scalar(arg1), Value::Scalar(arg2)) => Value::Scalar(func(arg1.cmp(&arg2))),
+        (Value::Column(arg1), Value::Scalar(arg2)) => {
+            let col = Bitmap::collect_bool(ctx.num_rows, |i| {
+                func(StringColumn::compare_str(&arg1, i, &arg2))
+            });
+            Value::Column(col)
         }
-        (ValueRef::Scalar(arg1), ValueRef::Column(arg2)) => {
-            let mut builder = MutableBitmap::with_capacity(arg1.len());
-            for i in 0..arg2.len() {
-                builder.push(func(StringColumn::compare_str(&arg2, i, arg1).reverse()));
-            }
-            Value::Column(builder.into())
+        (Value::Scalar(arg1), Value::Column(arg2)) => {
+            let col = Bitmap::collect_bool(ctx.num_rows, |i| {
+                func(StringColumn::compare_str(&arg2, i, &arg1).reverse())
+            });
+            Value::Column(col)
         }
-        (ValueRef::Column(arg1), ValueRef::Column(arg2)) => {
-            let mut builder = MutableBitmap::with_capacity(arg1.len());
-            for i in 0..arg1.len() {
-                builder.push(func(StringColumn::compare(&arg1, i, &arg2, i)));
-            }
-            Value::Column(builder.into())
+        (Value::Column(arg1), Value::Column(arg2)) => {
+            let col = Bitmap::collect_bool(ctx.num_rows, |i| {
+                func(StringColumn::compare(&arg1, i, &arg2, i))
+            });
+            Value::Column(col)
         }
     }
 }
@@ -231,7 +228,7 @@ fn register_timestamp_cmp(registry: &mut FunctionRegistry) {
 }
 
 fn register_boolean_cmp(registry: &mut FunctionRegistry) {
-    registry.register_2_arg::<BooleanType, BooleanType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<BooleanType, BooleanType, _, _>(
         "eq",
         |_, d1, d2| match (d1.has_true, d1.has_false, d2.has_true, d2.has_false) {
             (true, false, true, false) => FunctionDomain::Domain(ALL_TRUE_DOMAIN),
@@ -242,7 +239,7 @@ fn register_boolean_cmp(registry: &mut FunctionRegistry) {
         },
         |lhs, rhs, _| lhs == rhs,
     );
-    registry.register_2_arg::<BooleanType, BooleanType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<BooleanType, BooleanType, _, _>(
         "noteq",
         |_, d1, d2| match (d1.has_true, d1.has_false, d2.has_true, d2.has_false) {
             (true, false, true, false) => FunctionDomain::Domain(ALL_FALSE_DOMAIN),
@@ -253,7 +250,7 @@ fn register_boolean_cmp(registry: &mut FunctionRegistry) {
         },
         |lhs, rhs, _| lhs != rhs,
     );
-    registry.register_2_arg::<BooleanType, BooleanType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<BooleanType, BooleanType, _, _>(
         "gt",
         |_, d1, d2| match (d1.has_true, d1.has_false, d2.has_true, d2.has_false) {
             (true, false, false, true) => FunctionDomain::Domain(ALL_TRUE_DOMAIN),
@@ -262,7 +259,7 @@ fn register_boolean_cmp(registry: &mut FunctionRegistry) {
         },
         |lhs, rhs, _| lhs & !rhs,
     );
-    registry.register_2_arg::<BooleanType, BooleanType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<BooleanType, BooleanType, _, _>(
         "gte",
         |_, d1, d2| match (d1.has_true, d1.has_false, d2.has_true, d2.has_false) {
             (true, false, _, _) => FunctionDomain::Domain(ALL_TRUE_DOMAIN),
@@ -272,7 +269,7 @@ fn register_boolean_cmp(registry: &mut FunctionRegistry) {
         },
         |lhs, rhs, _| lhs | !rhs,
     );
-    registry.register_2_arg::<BooleanType, BooleanType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<BooleanType, BooleanType, _, _>(
         "lt",
         |_, d1, d2| match (d1.has_true, d1.has_false, d2.has_true, d2.has_false) {
             (false, true, true, false) => FunctionDomain::Domain(ALL_TRUE_DOMAIN),
@@ -281,7 +278,7 @@ fn register_boolean_cmp(registry: &mut FunctionRegistry) {
         },
         |lhs, rhs, _| !lhs & rhs,
     );
-    registry.register_2_arg::<BooleanType, BooleanType, BooleanType, _, _>(
+    registry.register_comparison_2_arg::<BooleanType, BooleanType, _, _>(
         "lte",
         |_, d1, d2| match (d1.has_true, d1.has_false, d2.has_true, d2.has_false) {
             (false, true, _, _) => FunctionDomain::Domain(ALL_TRUE_DOMAIN),
@@ -409,25 +406,25 @@ fn register_tuple_cmp(registry: &mut FunctionRegistry) {
                     calc_domain: Box::new(move |_, _| FunctionDomain::Full),
                     eval: Box::new(move |args, _| {
                         let len = args.iter().find_map(|arg| match arg {
-                            ValueRef::Column(col) => Some(col.len()),
+                            Value::Column(col) => Some(col.len()),
                             _ => None,
                         });
 
-                        let lhs_fields: Vec<ValueRef<AnyType>> = match &args[0] {
-                            ValueRef::Scalar(ScalarRef::Tuple(fields)) => {
-                                fields.iter().cloned().map(ValueRef::Scalar).collect()
+                        let lhs_fields: Vec<Value<AnyType>> = match &args[0] {
+                            Value::Scalar(Scalar::Tuple(fields)) => {
+                                fields.iter().cloned().map(Value::Scalar).collect()
                             }
-                            ValueRef::Column(Column::Tuple(fields)) => {
-                                fields.iter().cloned().map(ValueRef::Column).collect()
+                            Value::Column(Column::Tuple(fields)) => {
+                                fields.iter().cloned().map(Value::Column).collect()
                             }
                             _ => unreachable!(),
                         };
-                        let rhs_fields: Vec<ValueRef<AnyType>> = match &args[1] {
-                            ValueRef::Scalar(ScalarRef::Tuple(fields)) => {
-                                fields.iter().cloned().map(ValueRef::Scalar).collect()
+                        let rhs_fields: Vec<Value<AnyType>> = match &args[1] {
+                            Value::Scalar(Scalar::Tuple(fields)) => {
+                                fields.iter().cloned().map(Value::Scalar).collect()
                             }
-                            ValueRef::Column(Column::Tuple(fields)) => {
-                                fields.iter().cloned().map(ValueRef::Column).collect()
+                            Value::Column(Column::Tuple(fields)) => {
+                                fields.iter().cloned().map(Value::Column).collect()
                             }
                             _ => unreachable!(),
                         };
@@ -464,10 +461,18 @@ fn register_tuple_cmp(registry: &mut FunctionRegistry) {
     }
 
     register_tuple_cmp_op(registry, "eq", true, |lhs, rhs| {
-        if lhs != rhs { Some(false) } else { None }
+        if lhs != rhs {
+            Some(false)
+        } else {
+            None
+        }
     });
     register_tuple_cmp_op(registry, "noteq", false, |lhs, rhs| {
-        if lhs != rhs { Some(true) } else { None }
+        if lhs != rhs {
+            Some(true)
+        } else {
+            None
+        }
     });
     register_tuple_cmp_op(registry, "gt", false, |lhs, rhs| {
         match lhs.partial_cmp(&rhs) {
@@ -592,17 +597,16 @@ fn register_like(registry: &mut FunctionRegistry) {
 
 fn vectorize_like(
     func: impl Fn(&[u8], &LikePattern) -> bool + Copy,
-) -> impl Fn(ValueRef<StringType>, ValueRef<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy
-{
+) -> impl Fn(Value<StringType>, Value<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy {
     move |arg1, arg2, _ctx| match (arg1, arg2) {
-        (ValueRef::Scalar(arg1), ValueRef::Scalar(arg2)) => {
+        (Value::Scalar(arg1), Value::Scalar(arg2)) => {
             let pattern_type = generate_like_pattern(arg2.as_bytes(), 1);
             Value::Scalar(func(arg1.as_bytes(), &pattern_type))
         }
-        (ValueRef::Column(arg1), ValueRef::Scalar(arg2)) => {
+        (Value::Column(arg1), Value::Scalar(arg2)) => {
             let arg1_iter = StringType::iter_column(&arg1);
             let mut builder = MutableBitmap::with_capacity(arg1.len());
-            let pattern_type = generate_like_pattern(arg2.as_bytes(), arg1.current_buffer_len());
+            let pattern_type = generate_like_pattern(arg2.as_bytes(), arg1.total_bytes_len());
             if let LikePattern::SurroundByPercent(searcher) = pattern_type {
                 for arg1 in arg1_iter {
                     builder.push(searcher.search(arg1.as_bytes()).is_some());
@@ -615,7 +619,7 @@ fn vectorize_like(
 
             Value::Column(builder.into())
         }
-        (ValueRef::Scalar(arg1), ValueRef::Column(arg2)) => {
+        (Value::Scalar(arg1), Value::Column(arg2)) => {
             let arg2_iter = StringType::iter_column(&arg2);
             let mut builder = MutableBitmap::with_capacity(arg2.len());
             for arg2 in arg2_iter {
@@ -624,7 +628,7 @@ fn vectorize_like(
             }
             Value::Column(builder.into())
         }
-        (ValueRef::Column(arg1), ValueRef::Column(arg2)) => {
+        (Value::Column(arg1), Value::Column(arg2)) => {
             let arg1_iter = StringType::iter_column(&arg1);
             let arg2_iter = StringType::iter_column(&arg2);
             let mut builder = MutableBitmap::with_capacity(arg2.len());
@@ -639,33 +643,32 @@ fn vectorize_like(
 
 fn variant_vectorize_like(
     func: impl Fn(&[u8], &LikePattern) -> bool + Copy,
-) -> impl Fn(ValueRef<VariantType>, ValueRef<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy
-{
+) -> impl Fn(Value<VariantType>, Value<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy {
     move |arg1, arg2, _ctx| match (arg1, arg2) {
-        (ValueRef::Scalar(arg1), ValueRef::Scalar(arg2)) => {
+        (Value::Scalar(arg1), Value::Scalar(arg2)) => {
             let pattern_type = generate_like_pattern(arg2.as_bytes(), 1);
-            Value::Scalar(func(arg1, &pattern_type))
+            Value::Scalar(func(&arg1, &pattern_type))
         }
-        (ValueRef::Column(arg1), ValueRef::Scalar(arg2)) => {
+        (Value::Column(arg1), Value::Scalar(arg2)) => {
             let arg1_iter = VariantType::iter_column(&arg1);
 
-            let pattern_type = generate_like_pattern(arg2.as_bytes(), arg1.current_buffer_len());
+            let pattern_type = generate_like_pattern(arg2.as_bytes(), arg1.total_bytes_len());
             let mut builder = MutableBitmap::with_capacity(arg1.len());
             for arg1 in arg1_iter {
                 builder.push(func(arg1, &pattern_type));
             }
             Value::Column(builder.into())
         }
-        (ValueRef::Scalar(arg1), ValueRef::Column(arg2)) => {
+        (Value::Scalar(arg1), Value::Column(arg2)) => {
             let arg2_iter = StringType::iter_column(&arg2);
             let mut builder = MutableBitmap::with_capacity(arg2.len());
             for arg2 in arg2_iter {
                 let pattern_type = generate_like_pattern(arg2.as_bytes(), 1);
-                builder.push(func(arg1, &pattern_type));
+                builder.push(func(&arg1, &pattern_type));
             }
             Value::Column(builder.into())
         }
-        (ValueRef::Column(arg1), ValueRef::Column(arg2)) => {
+        (Value::Column(arg1), Value::Column(arg2)) => {
             let arg1_iter = VariantType::iter_column(&arg1);
             let arg2_iter = StringType::iter_column(&arg2);
             let mut builder = MutableBitmap::with_capacity(arg2.len());
@@ -680,41 +683,40 @@ fn variant_vectorize_like(
 
 fn vectorize_regexp(
     func: impl Fn(
-        &str,
-        &str,
-        &mut MutableBitmap,
-        &mut EvalContext,
-        &mut HashMap<String, Regex>,
-        &mut HashMap<Vec<u8>, String>,
-    ) + Copy,
-) -> impl Fn(ValueRef<StringType>, ValueRef<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy
-{
+            &str,
+            &str,
+            &mut MutableBitmap,
+            &mut EvalContext,
+            &mut HashMap<String, Regex>,
+            &mut HashMap<Vec<u8>, String>,
+        ) + Copy,
+) -> impl Fn(Value<StringType>, Value<StringType>, &mut EvalContext) -> Value<BooleanType> + Copy {
     move |arg1, arg2, ctx| {
         let mut map = HashMap::new();
         let mut string_map = HashMap::new();
         match (arg1, arg2) {
-            (ValueRef::Scalar(arg1), ValueRef::Scalar(arg2)) => {
+            (Value::Scalar(arg1), Value::Scalar(arg2)) => {
                 let mut builder = MutableBitmap::with_capacity(1);
-                func(arg1, arg2, &mut builder, ctx, &mut map, &mut string_map);
+                func(&arg1, &arg2, &mut builder, ctx, &mut map, &mut string_map);
                 Value::Scalar(BooleanType::build_scalar(builder))
             }
-            (ValueRef::Column(arg1), ValueRef::Scalar(arg2)) => {
+            (Value::Column(arg1), Value::Scalar(arg2)) => {
                 let arg1_iter = StringType::iter_column(&arg1);
                 let mut builder = MutableBitmap::with_capacity(arg1.len());
                 for arg1 in arg1_iter {
-                    func(arg1, arg2, &mut builder, ctx, &mut map, &mut string_map);
+                    func(arg1, &arg2, &mut builder, ctx, &mut map, &mut string_map);
                 }
                 Value::Column(builder.into())
             }
-            (ValueRef::Scalar(arg1), ValueRef::Column(arg2)) => {
+            (Value::Scalar(arg1), Value::Column(arg2)) => {
                 let arg2_iter = StringType::iter_column(&arg2);
                 let mut builder = MutableBitmap::with_capacity(arg2.len());
                 for arg2 in arg2_iter {
-                    func(arg1, arg2, &mut builder, ctx, &mut map, &mut string_map);
+                    func(&arg1, arg2, &mut builder, ctx, &mut map, &mut string_map);
                 }
                 Value::Column(builder.into())
             }
-            (ValueRef::Column(arg1), ValueRef::Column(arg2)) => {
+            (Value::Column(arg1), Value::Column(arg2)) => {
                 let arg1_iter = StringType::iter_column(&arg1);
                 let arg2_iter = StringType::iter_column(&arg2);
                 let mut builder = MutableBitmap::with_capacity(arg2.len());

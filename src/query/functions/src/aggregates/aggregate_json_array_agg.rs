@@ -15,14 +15,14 @@
 use std::alloc::Layout;
 use std::fmt;
 use std::marker::PhantomData;
+use std::mem;
 use std::sync::Arc;
 
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
-use databend_common_arrow::arrow::bitmap::Bitmap;
 use databend_common_exception::Result;
-use databend_common_expression::date_helper::TzLUT;
 use databend_common_expression::types::variant::cast_scalar_to_variant;
+use databend_common_expression::types::Bitmap;
 use databend_common_expression::types::DataType;
 use databend_common_expression::types::ValueType;
 use databend_common_expression::types::*;
@@ -30,6 +30,7 @@ use databend_common_expression::Column;
 use databend_common_expression::ColumnBuilder;
 use databend_common_expression::InputColumns;
 use databend_common_expression::Scalar;
+use jiff::tz::TimeZone;
 
 use super::aggregate_function_factory::AggregateFunctionDescription;
 use super::aggregate_scalar_state::ScalarStateFunc;
@@ -100,16 +101,17 @@ where
     }
 
     fn merge_result(&mut self, builder: &mut ColumnBuilder) -> Result<()> {
-        let tz = TzLUT::default();
+        let tz = TimeZone::UTC;
         let mut items = Vec::with_capacity(self.values.len());
-        for value in &self.values {
-            let v = T::upcast_scalar(value.clone());
+        let values = mem::take(&mut self.values);
+        for value in values.into_iter() {
+            let v = T::upcast_scalar(value);
             // NULL values are omitted from the output.
             if v == Scalar::Null {
                 continue;
             }
             let mut val = vec![];
-            cast_scalar_to_variant(v.as_ref(), tz, &mut val);
+            cast_scalar_to_variant(v.as_ref(), &tz, &mut val);
             items.push(val);
         }
         let mut data = vec![];

@@ -36,9 +36,9 @@ message TransferLeaderRequest {
   LogId last_log_id = 3;
 }
 
-message MemberListRequest { string data = 1; }
+message MemberListRequest {string data = 1;}
 
-message MemberListReply { repeated string data = 1; }
+message MemberListReply {repeated string data = 1;}
 
 message HandshakeRequest {
   uint64 protocol_version = 1;
@@ -94,7 +94,7 @@ message Event {
   optional SeqV prev = 3;
 }
 
-message WatchResponse { Event event = 1; }
+message WatchResponse {Event event = 1;}
 
 // messages for txn
 message TxnCondition {
@@ -111,10 +111,17 @@ message TxnCondition {
   string key = 1;
 
   oneof target {
-    // used when compare value
+    // Compare the stored value of `key` against the given value.
     bytes value = 2;
-    // used when compare seq
+
+    // Compare the stored seq of `key` against the given seq.
     uint64 seq = 3;
+
+    // Compare the count of keys having the prefix `key` against the given value.
+    //
+    // Usually when using this option, append a slash `/` to the end of the prefix `key`.
+    // For example, if you want to count the keys with prefix `foo`, you should use `foo/` as the `key`.
+    uint64 keys_with_prefix = 5;
   }
 
   // the expected result of condition, if `expected` match the condition result,
@@ -181,6 +188,19 @@ message ClusterStatus {
   repeated string non_voters = 16;
   uint64 last_seq = 17;
   uint64 snapshot_key_count = 18;
+  RaftLogStatus raft_log_status = 19;
+}
+
+// Status about local raft-log storage
+message RaftLogStatus {
+  uint64 cache_items = 1;
+  uint64 cache_used_size = 2;
+  uint64 wal_total_size = 3;
+  uint64 wal_open_chunk_size = 4;
+  uint64 wal_offset = 5;
+  uint64 wal_closed_chunk_count = 6;
+  uint64 wal_closed_chunk_total_size = 7;
+  map<string, uint64> wal_closed_chunk_sizes = 8;
 }
 
 message ClientInfo {

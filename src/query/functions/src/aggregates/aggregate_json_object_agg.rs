@@ -16,17 +16,16 @@ use std::alloc::Layout;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
+use std::mem;
 use std::sync::Arc;
 
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
-use databend_common_arrow::arrow::bitmap;
-use databend_common_arrow::arrow::bitmap::Bitmap;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
-use databend_common_expression::date_helper::TzLUT;
 use databend_common_expression::types::string::StringColumn;
 use databend_common_expression::types::variant::cast_scalar_to_variant;
+use databend_common_expression::types::Bitmap;
 use databend_common_expression::types::DataType;
 use databend_common_expression::types::ValueType;
 use databend_common_expression::types::*;
@@ -34,6 +33,7 @@ use databend_common_expression::Column;
 use databend_common_expression::ColumnBuilder;
 use databend_common_expression::InputColumns;
 use databend_common_expression::Scalar;
+use jiff::tz::TimeZone;
 
 use super::aggregate_function_factory::AggregateFunctionDescription;
 use super::borsh_deserialize_state;
@@ -166,20 +166,21 @@ where
     }
 
     fn merge_result(&mut self, builder: &mut ColumnBuilder) -> Result<()> {
-        let tz = TzLUT::default();
-        let mut kvs = Vec::with_capacity(self.kvs.len());
-        for (key, value) in &self.kvs {
-            let v = V::upcast_scalar(value.clone());
+        let tz = TimeZone::UTC;
+        let mut values = Vec::with_capacity(self.kvs.len());
+        let kvs = mem::take(&mut self.kvs);
+        for (key, value) in kvs.into_iter() {
+            let v = V::upcast_scalar(value);
             // NULL values are omitted from the output.
             if v == Scalar::Null {
                 continue;
             }
             let mut val = vec![];
-            cast_scalar_to_variant(v.as_ref(), tz, &mut val);
-            kvs.push((key, val));
+            cast_scalar_to_variant(v.as_ref(), &tz, &mut val);
+            values.push((key, val));
         }
         let mut data = vec![];
-        jsonb::build_object(kvs.iter().map(|(k, v)| (k, &v[..])), &mut data).unwrap();
+        jsonb::build_object(values.iter().map(|(k, v)| (k, &v[..])), &mut data).unwrap();
 
         let object_value = Scalar::Variant(data);
         builder.push(object_value.as_ref());
@@ -364,7 +365,7 @@ where
         };
         let validity = match (key_validity, val_validity) {
             (Some(key_validity), Some(val_validity)) => {
-                let and_validity = bitmap::and(&key_validity, &val_validity);
+                let and_validity = boolean::and(&key_validity, &val_validity);
                 Some(and_validity)
             }
             (Some(key_validity), None) => Some(key_validity.clone()),

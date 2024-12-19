@@ -22,7 +22,6 @@ use dashmap::DashMap;
 use databend_common_base::base::tokio;
 use databend_common_base::base::Progress;
 use databend_common_base::base::ProgressValues;
-use databend_common_base::runtime::Runtime;
 use databend_common_catalog::catalog::Catalog;
 use databend_common_catalog::cluster_info::Cluster;
 use databend_common_catalog::database::Database;
@@ -33,18 +32,17 @@ use databend_common_catalog::plan::PartInfoPtr;
 use databend_common_catalog::plan::Partitions;
 use databend_common_catalog::query_kind::QueryKind;
 use databend_common_catalog::runtime_filter_info::RuntimeFilterInfo;
+use databend_common_catalog::runtime_filter_info::RuntimeFilterReady;
 use databend_common_catalog::statistics::data_cache_statistics::DataCacheMetrics;
 use databend_common_catalog::table::Table;
 use databend_common_catalog::table_context::ContextError;
 use databend_common_catalog::table_context::FilteredCopyFiles;
-use databend_common_catalog::table_context::MaterializedCtesBlocks;
 use databend_common_catalog::table_context::ProcessInfo;
 use databend_common_catalog::table_context::StageAttachment;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_expression::BlockThresholds;
-use databend_common_expression::DataBlock;
 use databend_common_expression::Expr;
 use databend_common_expression::FunctionContext;
 use databend_common_expression::Scalar;
@@ -498,7 +496,7 @@ impl TableContext for CtxDelegation {
     }
 
     fn txn_mgr(&self) -> TxnManagerRef {
-        todo!()
+        self.ctx.txn_mgr()
     }
 
     fn incr_total_scan_value(&self, _value: ProgressValues) {
@@ -689,7 +687,10 @@ impl TableContext for CtxDelegation {
         todo!()
     }
 
-    async fn get_visibility_checker(&self) -> Result<GrantObjectVisibilityChecker> {
+    async fn get_visibility_checker(
+        &self,
+        _ignore_ownership: bool,
+    ) -> Result<GrantObjectVisibilityChecker> {
         todo!()
     }
 
@@ -816,6 +817,10 @@ impl TableContext for CtxDelegation {
         }
     }
 
+    fn evict_table_from_cache(&self, _catalog: &str, _database: &str, _table: &str) -> Result<()> {
+        todo!()
+    }
+
     async fn get_table_with_batch(
         &self,
         catalog: &str,
@@ -834,25 +839,6 @@ impl TableContext for CtxDelegation {
         _files: &[StageFileInfo],
         _max_files: Option<usize>,
     ) -> Result<FilteredCopyFiles> {
-        todo!()
-    }
-
-    fn set_materialized_cte(
-        &self,
-        _idx: (usize, usize),
-        _blocks: Arc<RwLock<Vec<DataBlock>>>,
-    ) -> Result<()> {
-        todo!()
-    }
-
-    fn get_materialized_cte(
-        &self,
-        _idx: (usize, usize),
-    ) -> Result<Option<Arc<RwLock<Vec<DataBlock>>>>> {
-        todo!()
-    }
-
-    fn get_materialized_ctes(&self) -> MaterializedCtesBlocks {
         todo!()
     }
 
@@ -928,6 +914,22 @@ impl TableContext for CtxDelegation {
         todo!()
     }
 
+    fn set_runtime_filter_ready(&self, _table_index: usize, _ready: Arc<RuntimeFilterReady>) {
+        todo!()
+    }
+
+    fn get_runtime_filter_ready(&self, _table_index: usize) -> Vec<Arc<RuntimeFilterReady>> {
+        todo!()
+    }
+
+    fn set_wait_runtime_filter(&self, _table_index: usize, _need_to_wait: bool) {
+        todo!()
+    }
+
+    fn get_wait_runtime_filter(&self, _table_index: usize) -> bool {
+        todo!()
+    }
+
     fn clear_runtime_filter(&self) {
         todo!()
     }
@@ -994,7 +996,11 @@ impl TableContext for CtxDelegation {
         false
     }
 
-    fn get_runtime(&self) -> Result<Arc<Runtime>> {
+    fn add_m_cte_temp_table(&self, _database_name: &str, _table_name: &str) {
+        todo!()
+    }
+
+    async fn drop_m_cte_temp_table(&self) -> Result<()> {
         todo!()
     }
 }

@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use databend_common_arrow::arrow::buffer::Buffer;
-use databend_common_arrow::arrow::types::Index;
 use databend_common_base::base::OrderedFloat;
+use databend_common_column::bitmap::Bitmap;
+use databend_common_column::buffer::Buffer;
+use databend_common_column::types::Index;
 use databend_common_exception::Result;
 use ethnum::i256;
 
@@ -186,7 +187,7 @@ where I: Index
     }
 }
 
-impl<'a, 'b, const IS_FIRST: bool, I> ValueVisitor for IndexHashVisitor<'a, 'b, IS_FIRST, I>
+impl<const IS_FIRST: bool, I> ValueVisitor for IndexHashVisitor<'_, '_, IS_FIRST, I>
 where I: Index
 {
     fn visit_scalar(&mut self, scalar: Scalar) -> Result<()> {
@@ -267,10 +268,7 @@ where I: Index
         self.visit_indices(|i| column.index(i.to_usize()).unwrap().as_bytes().agg_hash())
     }
 
-    fn visit_boolean(
-        &mut self,
-        bitmap: databend_common_arrow::arrow::bitmap::Bitmap,
-    ) -> Result<()> {
+    fn visit_boolean(&mut self, bitmap: Bitmap) -> Result<()> {
         self.visit_indices(|i| bitmap.get(i.to_usize()).unwrap().agg_hash())
     }
 
@@ -320,7 +318,7 @@ where I: Index
     }
 }
 
-impl<'a, 'b, const IS_FIRST: bool, I> IndexHashVisitor<'a, 'b, IS_FIRST, I>
+impl<const IS_FIRST: bool, I> IndexHashVisitor<'_, '_, IS_FIRST, I>
 where I: Index
 {
     fn visit_indices<F>(&mut self, do_hash: F) -> Result<()>
@@ -466,7 +464,7 @@ impl AggHash for ScalarRef<'_> {
 
 #[cfg(test)]
 mod tests {
-    use databend_common_arrow::arrow::bitmap::Bitmap;
+    use databend_common_column::bitmap::Bitmap;
 
     use super::*;
     use crate::types::ArgType;

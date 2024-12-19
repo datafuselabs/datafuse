@@ -15,8 +15,8 @@
 use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::Hash;
-use std::sync::Arc;
 
 use dashmap::DashMap;
 use databend_common_ast::ast::Identifier;
@@ -32,6 +32,7 @@ use databend_common_expression::ColumnId;
 use databend_common_expression::DataField;
 use databend_common_expression::DataSchemaRef;
 use databend_common_expression::DataSchemaRefExt;
+use databend_common_expression::TableDataType;
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
 use itertools::Itertools;
@@ -39,14 +40,11 @@ use itertools::Itertools;
 use super::AggregateInfo;
 use super::INTERNAL_COLUMN_FACTORY;
 use crate::binder::column_binding::ColumnBinding;
+use crate::binder::project_set::SetReturningInfo;
 use crate::binder::window::WindowInfo;
 use crate::binder::ColumnBindingBuilder;
 use crate::normalize_identifier;
-use crate::optimizer::SExpr;
-use crate::plans::MaterializedCte;
-use crate::plans::RelOperator;
 use crate::plans::ScalarExpr;
-use crate::plans::ScalarItem;
 use crate::ColumnSet;
 use crate::IndexType;
 use crate::MetadataRef;
@@ -108,6 +106,25 @@ pub enum NameResolutionResult {
     Alias { alias: String, scalar: ScalarExpr },
 }
 
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
+pub struct VirtualColumnContext {
+    /// Whether allow rewrite as virtual column and pushdown.
+    pub allow_pushdown: bool,
+    /// The table indics of the virtual column has been readded,
+    /// used to avoid repeated reading
+    pub table_indices: HashSet<IndexType>,
+    /// Mapping: (table index) -> (derived virtual column indices)
+    /// This is used to add virtual column indices to Scan plan
+    pub virtual_column_indices: HashMap<IndexType, Vec<IndexType>>,
+    /// Mapping: (table index) -> (virtual column names and data types)
+    /// This is used to check whether the virtual column has be created
+    pub virtual_column_names: HashMap<IndexType, HashMap<String, TableDataType>>,
+    /// Mapping: (table index) -> (next virtual column id)
+    /// The is used to generate virtual column id for virtual columns.
+    /// Not a real column id, only used to identify a virtual column.
+    pub next_column_ids: HashMap<IndexType, u32>,
+}
+
 /// `BindContext` stores all the free variables in a query and tracks the context of binding procedure.
 #[derive(Clone, Debug)]
 pub struct BindContext {
@@ -122,6 +139,9 @@ pub struct BindContext {
 
     pub windows: WindowInfo,
 
+    /// Set-returning functions info in current context.
+    pub srf_info: SetReturningInfo,
+
     pub cte_context: CteContext,
 
     /// True if there is aggregation in current context, which means
@@ -134,9 +154,6 @@ pub struct BindContext {
     /// It's used to check if the view has a loop dependency.
     pub view_info: Option<(String, String)>,
 
-    /// Set-returning functions in current context.
-    pub srfs: Vec<ScalarItem>,
-
     /// True if there is async function in current context, need rewrite.
     pub have_async_func: bool,
     /// True if there is udf script in current context, need rewrite.
@@ -145,6 +162,8 @@ pub struct BindContext {
     pub have_udf_server: bool,
 
     pub inverted_index_map: Box<IndexMap<IndexType, InvertedIndexInfo>>,
+
+    pub virtual_column_context: VirtualColumnContext,
 
     pub expr_context: ExprContext,
 
@@ -159,28 +178,10 @@ pub struct BindContext {
 pub struct CteContext {
     /// If the `BindContext` is created from a CTE, record the cte name
     pub cte_name: Option<String>,
-    /// Use `IndexMap` because need to keep the insertion order
-    /// Then wrap materialized ctes to main plan.
     pub cte_map: Box<IndexMap<String, CteInfo>>,
-    /// Record the bound s_expr of materialized cte
-    pub m_cte_bound_s_expr: HashMap<IndexType, SExpr>,
-    pub m_cte_materialized_indexes: HashMap<IndexType, IndexType>,
 }
 
 impl CteContext {
-    pub fn set_m_cte_bound_s_expr(&mut self, cte_idx: IndexType, s_expr: SExpr) {
-        self.m_cte_bound_s_expr.insert(cte_idx, s_expr);
-    }
-
-    pub fn set_m_cte_materialized_indexes(&mut self, cte_idx: IndexType, index: IndexType) {
-        self.m_cte_materialized_indexes.insert(cte_idx, index);
-    }
-
-    // Check if the materialized cte has been bound.
-    pub fn has_bound(&self, cte_idx: IndexType) -> bool {
-        self.m_cte_bound_s_expr.contains_key(&cte_idx)
-    }
-
     // Merge two `CteContext` into one.
     pub fn merge(&mut self, other: CteContext) {
         let mut merged_cte_map = IndexMap::new();
@@ -194,41 +195,11 @@ impl CteContext {
             }
         }
         self.cte_map = Box::new(merged_cte_map);
-        self.m_cte_bound_s_expr.extend(other.m_cte_bound_s_expr);
-        self.m_cte_materialized_indexes
-            .extend(other.m_cte_materialized_indexes);
-    }
-
-    // Wrap materialized cte to main plan.
-    // It will be called at the end of binding.
-    pub fn wrap_m_cte(&self, mut s_expr: SExpr) -> SExpr {
-        for (_, cte_info) in self.cte_map.iter().rev() {
-            if !cte_info.materialized {
-                continue;
-            }
-            if let Some(cte_s_expr) = self.m_cte_bound_s_expr.get(&cte_info.cte_idx) {
-                let materialized_output_columns = cte_info.columns.clone();
-                s_expr = SExpr::create_binary(
-                    Arc::new(RelOperator::MaterializedCte(MaterializedCte {
-                        cte_idx: cte_info.cte_idx,
-                        materialized_output_columns,
-                        materialized_indexes: self.m_cte_materialized_indexes.clone(),
-                    })),
-                    Arc::new(s_expr),
-                    Arc::new(cte_s_expr.clone()),
-                );
-            }
-        }
-        s_expr
     }
 
     // Set cte context to current `BindContext`.
-    // To make sure the last `BindContext` of the whole binding phase contains `cte context`
-    // Then we can wrap materialized cte to main plan.
     pub fn set_cte_context(&mut self, cte_context: CteContext) {
         self.cte_map = cte_context.cte_map;
-        self.m_cte_bound_s_expr = cte_context.m_cte_bound_s_expr;
-        self.m_cte_materialized_indexes = cte_context.m_cte_materialized_indexes;
     }
 }
 
@@ -251,14 +222,15 @@ impl BindContext {
             bound_internal_columns: BTreeMap::new(),
             aggregate_info: AggregateInfo::default(),
             windows: WindowInfo::default(),
+            srf_info: SetReturningInfo::default(),
             cte_context: CteContext::default(),
             in_grouping: false,
             view_info: None,
-            srfs: Vec::new(),
             have_async_func: false,
             have_udf_script: false,
             have_udf_server: false,
             inverted_index_map: Box::default(),
+            virtual_column_context: VirtualColumnContext::default(),
             expr_context: ExprContext::default(),
             planning_agg_index: false,
             window_definitions: DashMap::new(),
@@ -272,14 +244,15 @@ impl BindContext {
             bound_internal_columns: BTreeMap::new(),
             aggregate_info: Default::default(),
             windows: Default::default(),
+            srf_info: Default::default(),
             cte_context: parent.cte_context.clone(),
             in_grouping: false,
             view_info: None,
-            srfs: Vec::new(),
             have_async_func: false,
             have_udf_script: false,
             have_udf_server: false,
             inverted_index_map: Box::default(),
+            virtual_column_context: Default::default(),
             expr_context: ExprContext::default(),
             planning_agg_index: false,
             window_definitions: DashMap::new(),

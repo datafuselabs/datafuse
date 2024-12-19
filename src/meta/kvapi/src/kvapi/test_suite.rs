@@ -20,6 +20,7 @@ use databend_common_meta_types::seq_value::SeqV;
 use databend_common_meta_types::txn_condition;
 use databend_common_meta_types::txn_op;
 use databend_common_meta_types::txn_op_response;
+use databend_common_meta_types::txn_op_response::Response;
 use databend_common_meta_types::ConditionResult;
 use databend_common_meta_types::MatchSeq;
 use databend_common_meta_types::MetaSpec;
@@ -36,6 +37,7 @@ use databend_common_meta_types::TxnOpResponse;
 use databend_common_meta_types::TxnPutResponse;
 use databend_common_meta_types::TxnReply;
 use databend_common_meta_types::TxnRequest;
+use databend_common_meta_types::UpsertKV;
 use databend_common_meta_types::With;
 use fastrace::func_name;
 use fastrace::func_path;
@@ -43,13 +45,36 @@ use log::debug;
 use log::info;
 
 use crate::kvapi;
-use crate::kvapi::UpsertKVReq;
 
 pub struct TestSuite {}
 
 impl kvapi::TestSuite {
     #[fastrace::trace]
     pub async fn test_all<KV, B>(&self, builder: B) -> anyhow::Result<()>
+    where
+        KV: kvapi::KVApi,
+        B: kvapi::ApiBuilder<KV>,
+    {
+        self.test_single_node(&builder).await?;
+
+        // Run cross node test on every 2 adjacent nodes
+        let mut i = 0;
+        loop {
+            let cluster = builder.build_cluster().await;
+            self.kv_write_read_across_nodes(&cluster[i], &cluster[i + 1])
+                .await?;
+
+            if i + 1 == cluster.len() - 1 {
+                break;
+            }
+            i += 1;
+        }
+
+        Ok(())
+    }
+
+    #[fastrace::trace]
+    pub async fn test_single_node<KV, B>(&self, builder: &B) -> anyhow::Result<()>
     where
         KV: kvapi::KVApi,
         B: kvapi::ApiBuilder<KV>,
@@ -67,25 +92,14 @@ impl kvapi::TestSuite {
         self.kv_transaction_with_ttl(&builder.build().await).await?;
         self.kv_transaction_delete_match_seq_none(&builder.build().await)
             .await?;
+        self.kv_transaction_condition_keys_with_prefix(&builder.build().await)
+            .await?;
         self.kv_transaction_delete_match_seq_some_not_match(&builder.build().await)
             .await?;
         self.kv_transaction_delete_match_seq_some_match(&builder.build().await)
             .await?;
         self.kv_delete_by_prefix_transaction(&builder.build().await)
             .await?;
-
-        // Run cross node test on every 2 adjacent nodes
-        let mut i = 0;
-        loop {
-            let cluster = builder.build_cluster().await;
-            self.kv_write_read_across_nodes(&cluster[i], &cluster[i + 1])
-                .await?;
-
-            if i + 1 == cluster.len() - 1 {
-                break;
-            }
-            i += 1;
-        }
 
         Ok(())
     }
@@ -97,21 +111,18 @@ impl kvapi::TestSuite {
         info!("--- kvapi::KVApiTestSuite::kv_write_read() start");
         {
             // write
-            let res = kv.upsert_kv(UpsertKVReq::update("foo", b"bar")).await?;
+            let res = kv.upsert_kv(UpsertKV::update("foo", b"bar")).await?;
             assert_eq!(None, res.prev);
-            assert_eq!(Some(SeqV::with_meta(1, None, b"bar".to_vec())), res.result);
+            assert_eq!(Some(SeqV::new(1, b("bar"))), res.result);
         }
 
         {
             // write fails with unmatched seq
             let res = kv
-                .upsert_kv(UpsertKVReq::update("foo", b"bar").with(MatchSeq::Exact(2)))
+                .upsert_kv(UpsertKV::update("foo", b"bar").with(MatchSeq::Exact(2)))
                 .await?;
             assert_eq!(
-                (
-                    Some(SeqV::with_meta(1, None, b"bar".to_vec())),
-                    Some(SeqV::with_meta(1, None, b"bar".to_vec())),
-                ),
+                (Some(SeqV::new(1, b("bar"))), Some(SeqV::new(1, b("bar"))),),
                 (res.prev, res.result),
                 "nothing changed"
             );
@@ -120,18 +131,10 @@ impl kvapi::TestSuite {
         {
             // write done with matching seq
             let res = kv
-                .upsert_kv(UpsertKVReq::update("foo", b"wow").with(MatchSeq::Exact(1)))
+                .upsert_kv(UpsertKV::update("foo", b"wow").with(MatchSeq::Exact(1)))
                 .await?;
-            assert_eq!(
-                Some(SeqV::with_meta(1, None, b"bar".to_vec())),
-                res.prev,
-                "old value"
-            );
-            assert_eq!(
-                Some(SeqV::with_meta(2, None, b"wow".to_vec())),
-                res.result,
-                "new value"
-            );
+            assert_eq!(Some(SeqV::new(1, b("bar"))), res.prev, "old value");
+            assert_eq!(Some(SeqV::new(2, b("wow"))), res.result, "new value");
         }
 
         Ok(())
@@ -141,19 +144,14 @@ impl kvapi::TestSuite {
     pub async fn kv_delete<KV: kvapi::KVApi>(&self, kv: &KV) -> anyhow::Result<()> {
         info!("--- kvapi::KVApiTestSuite::kv_delete() start");
         let test_key = "test_key";
-        kv.upsert_kv(UpsertKVReq::update(test_key, b"v1")).await?;
+        kv.upsert_kv(UpsertKV::update(test_key, b"v1")).await?;
 
         let current = kv.get_kv(test_key).await?;
         if let Some(SeqV { seq, .. }) = current {
             // seq mismatch
             let wrong_seq = MatchSeq::Exact(seq + 1);
             let res = kv
-                .upsert_kv(UpsertKVReq::new(
-                    test_key,
-                    wrong_seq,
-                    Operation::Delete,
-                    None,
-                ))
+                .upsert_kv(UpsertKV::new(test_key, wrong_seq, Operation::Delete, None))
                 .await?;
 
             assert_eq!(res.prev, res.result);
@@ -162,7 +160,7 @@ impl kvapi::TestSuite {
 
             // seq match
             let res = kv
-                .upsert_kv(UpsertKVReq::delete(test_key).with(MatchSeq::Exact(seq)))
+                .upsert_kv(UpsertKV::delete(test_key).with(MatchSeq::Exact(seq)))
                 .await?;
             assert!(res.result.is_none());
 
@@ -174,23 +172,20 @@ impl kvapi::TestSuite {
         }
 
         // key not exist
-        let res = kv.upsert_kv(UpsertKVReq::delete("not exists")).await?;
+        let res = kv.upsert_kv(UpsertKV::delete("not exists")).await?;
         // dbg!("delete non-exist key", &res);
 
         assert_eq!(None, res.prev);
         assert_eq!(None, res.result);
 
         // do not care seq
-        let _res = kv.upsert_kv(UpsertKVReq::update(test_key, b"v2")).await?;
+        let _res = kv.upsert_kv(UpsertKV::update(test_key, b"v2")).await?;
         // dbg!("update with v2", &res);
 
-        let res = kv.upsert_kv(UpsertKVReq::delete(test_key)).await?;
+        let res = kv.upsert_kv(UpsertKV::delete(test_key)).await?;
         // dbg!("delete", &res);
 
-        assert_eq!(
-            (Some(SeqV::with_meta(2, None, b"v2".to_vec())), None),
-            (res.prev, res.result)
-        );
+        assert_eq!((Some(SeqV::new(2, b("v2"))), None), (res.prev, res.result));
 
         Ok(())
     }
@@ -201,43 +196,40 @@ impl kvapi::TestSuite {
         let test_key = "test_key_for_update";
 
         let r = kv
-            .upsert_kv(UpsertKVReq::update(test_key, b"v1").with(MatchSeq::GE(1)))
+            .upsert_kv(UpsertKV::update(test_key, b"v1").with(MatchSeq::GE(1)))
             .await?;
         assert_eq!((None, None), (r.prev, r.result), "not changed");
 
-        let r = kv.upsert_kv(UpsertKVReq::update(test_key, b"v1")).await?;
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.result);
+        let r = kv.upsert_kv(UpsertKV::update(test_key, b"v1")).await?;
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.result);
         let seq = r.result.unwrap().seq;
 
         // unmatched seq
         let r = kv
-            .upsert_kv(UpsertKVReq::update(test_key, b"v2").with(MatchSeq::Exact(seq + 1)))
+            .upsert_kv(UpsertKV::update(test_key, b"v2").with(MatchSeq::Exact(seq + 1)))
             .await?;
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.prev);
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.result);
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.prev);
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.result);
 
         // matched seq
         let r = kv
-            .upsert_kv(UpsertKVReq::update(test_key, b"v2").with(MatchSeq::Exact(seq)))
+            .upsert_kv(UpsertKV::update(test_key, b"v2").with(MatchSeq::Exact(seq)))
             .await?;
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.prev);
-        assert_eq!(Some(SeqV::with_meta(2, None, b"v2".to_vec())), r.result);
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.prev);
+        assert_eq!(Some(SeqV::new(2, b("v2"))), r.result);
 
         // blind update
         let r = kv
-            .upsert_kv(UpsertKVReq::update(test_key, b"v3").with(MatchSeq::GE(1)))
+            .upsert_kv(UpsertKV::update(test_key, b"v3").with(MatchSeq::GE(1)))
             .await?;
-        assert_eq!(Some(SeqV::with_meta(2, None, b"v2".to_vec())), r.prev);
-        assert_eq!(Some(SeqV::with_meta(3, None, b"v3".to_vec())), r.result);
+        assert_eq!(Some(SeqV::new(2, b("v2"))), r.prev);
+        assert_eq!(Some(SeqV::new(3, b("v3"))), r.result);
 
         // value updated
         let key_value = kv.get_kv(test_key).await?;
         assert!(key_value.is_some());
         let key_value = key_value.unwrap();
-        assert_eq!(
-            key_value,
-            SeqV::with_meta(key_value.seq, None, b"v3".to_vec())
-        );
+        assert_eq!(key_value, SeqV::new(key_value.seq, b("v3")));
         Ok(())
     }
 
@@ -252,7 +244,7 @@ impl kvapi::TestSuite {
 
         let _res = kv
             .upsert_kv(
-                UpsertKVReq::update("k1", b"v1").with(MetaSpec::new_ttl(Duration::from_secs(2))),
+                UpsertKV::update("k1", b"v1").with(MetaSpec::new_ttl(Duration::from_secs(2))),
             )
             .await?;
         // dbg!("upsert non expired k1", _res);
@@ -260,6 +252,7 @@ impl kvapi::TestSuite {
         info!("---get unexpired");
         {
             let res = kv.get_kv("k1").await?;
+            // dbg!("got k1:{:?}", &res);
             // dbg!("got non expired k1", &res);
             assert!(res.is_some(), "got unexpired");
         }
@@ -280,7 +273,7 @@ impl kvapi::TestSuite {
             // dbg!("start upsert expired k1");
             let _res = kv
                 .upsert_kv(
-                    UpsertKVReq::update("k1", b"v1")
+                    UpsertKV::update("k1", b"v1")
                         .with(MatchSeq::Exact(0))
                         .with(MetaSpec::new_expire(now_sec - 1)),
                 )
@@ -289,7 +282,7 @@ impl kvapi::TestSuite {
 
             let _res = kv
                 .upsert_kv(
-                    UpsertKVReq::update("k2", b"v2")
+                    UpsertKV::update("k2", b"v2")
                         .with(MatchSeq::Exact(0))
                         .with(MetaSpec::new_ttl(Duration::from_secs(10))),
                 )
@@ -322,7 +315,7 @@ impl kvapi::TestSuite {
         info!("--- update expire");
         {
             kv.upsert_kv(
-                UpsertKVReq::update("k2", b"v2")
+                UpsertKV::update("k2", b"v2")
                     .with(MatchSeq::Exact(3))
                     .with(MetaSpec::new_expire(now_sec - 1)),
             )
@@ -343,8 +336,7 @@ impl kvapi::TestSuite {
 
         let _res = kv
             .upsert_kv(
-                UpsertKVReq::update("k1", b"v1")
-                    .with(MetaSpec::new_ttl(Duration::from_millis(2_000))),
+                UpsertKV::update("k1", b"v1").with(MetaSpec::new_ttl(Duration::from_millis(2_000))),
             )
             .await?;
 
@@ -372,34 +364,34 @@ impl kvapi::TestSuite {
 
         let now_sec = SeqV::<()>::now_sec();
 
-        let r = kv.upsert_kv(UpsertKVReq::update(test_key, b"v1")).await?;
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.result);
+        let r = kv.upsert_kv(UpsertKV::update(test_key, b"v1")).await?;
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.result);
         let seq = r.result.unwrap().seq;
 
         info!("--- mismatching seq does nothing");
 
         let r = kv
-            .upsert_kv(UpsertKVReq::new(
+            .upsert_kv(UpsertKV::new(
                 test_key,
                 MatchSeq::Exact(seq + 1),
-                Operation::AsIs,
+                Operation::Update(b("v1")),
                 Some(MetaSpec::new_ttl(Duration::from_secs(20))),
             ))
             .await?;
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.prev);
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.result);
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.prev);
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.result);
 
         info!("--- matching seq only update meta");
 
         let r = kv
-            .upsert_kv(UpsertKVReq::new(
+            .upsert_kv(UpsertKV::new(
                 test_key,
                 MatchSeq::Exact(seq),
-                Operation::AsIs,
+                Operation::Update(b("v1")),
                 Some(MetaSpec::new_ttl(Duration::from_secs(20))),
             ))
             .await?;
-        assert_eq!(Some(SeqV::with_meta(1, None, b"v1".to_vec())), r.prev);
+        assert_eq!(Some(SeqV::new(1, b("v1"))), r.prev);
 
         {
             let res = r.result.unwrap();
@@ -438,16 +430,15 @@ impl kvapi::TestSuite {
 
         let mut values = vec![];
         {
-            kv.upsert_kv(UpsertKVReq::update("t", b"")).await?;
+            kv.upsert_kv(UpsertKV::update("t", b"")).await?;
 
             for i in 0..9 {
                 let key = format!("__users/{}", i);
                 let val = format!("val_{}", i);
                 values.push(val.clone());
-                kv.upsert_kv(UpsertKVReq::update(&key, val.as_bytes()))
-                    .await?;
+                kv.upsert_kv(UpsertKV::update(&key, val.as_bytes())).await?;
             }
-            kv.upsert_kv(UpsertKVReq::update("v", b"")).await?;
+            kv.upsert_kv(UpsertKV::update("v", b"")).await?;
         }
 
         let res = kv.prefix_list_kv("__users/").await?;
@@ -467,20 +458,20 @@ impl kvapi::TestSuite {
     pub async fn kv_mget<KV: kvapi::KVApi>(&self, kv: &KV) -> anyhow::Result<()> {
         info!("--- kvapi::KVApiTestSuite::kv_mget() start");
 
-        kv.upsert_kv(UpsertKVReq::update("k1", b"v1")).await?;
-        kv.upsert_kv(UpsertKVReq::update("k2", b"v2")).await?;
+        kv.upsert_kv(UpsertKV::update("k1", b"v1")).await?;
+        kv.upsert_kv(UpsertKV::update("k2", b"v2")).await?;
 
         let res = kv.mget_kv(&["k1".to_string(), "k2".to_string()]).await?;
         assert_eq!(res, vec![
-            Some(SeqV::with_meta(1, None, b"v1".to_vec(),)),
+            Some(SeqV::new(1, b("v1"),)),
             // NOTE, the sequence number is increased globally (inside the namespace of generic kv)
-            Some(SeqV::with_meta(2, None, b"v2".to_vec(),)),
+            Some(SeqV::new(2, b("v2"),)),
         ]);
 
         let res = kv
             .mget_kv(&["k1".to_string(), "key_no exist".to_string()])
             .await?;
-        assert_eq!(res, vec![Some(SeqV::new(1, b"v1".to_vec())), None]);
+        assert_eq!(res, vec![Some(SeqV::new(1, b("v1"))), None]);
 
         Ok(())
     }
@@ -555,7 +546,7 @@ impl kvapi::TestSuite {
         let unmatch_keys = vec!["teskey4".to_string()];
 
         for key in [match_keys.clone(), unmatch_keys.clone()].concat().iter() {
-            kv.upsert_kv(UpsertKVReq::update(key, b"v1")).await?;
+            kv.upsert_kv(UpsertKV::update(key, b"v1")).await?;
 
             let current = kv.get_kv(key).await?;
             assert!(current.is_some());
@@ -651,15 +642,16 @@ impl kvapi::TestSuite {
         Ok(())
     }
 
+    #[allow(clippy::bool_assert_comparison)]
     pub async fn kv_transaction<KV: kvapi::KVApi>(&self, kv: &KV) -> anyhow::Result<()> {
         info!("--- kvapi::KVApiTestSuite::kv_transaction() start");
         // first case: get and set one key transaction
         {
             let k1 = "txn_1_K1";
-            let val1 = b"v1".to_vec();
+            let val1 = b("v1");
 
             // first insert k1 value
-            kv.upsert_kv(UpsertKVReq::update(k1, &val1)).await?;
+            kv.upsert_kv(UpsertKV::update(k1, &val1)).await?;
 
             // transaction by k1 condition
             let txn_key = k1.to_string();
@@ -695,7 +687,7 @@ impl kvapi::TestSuite {
             let k1 = "txn_2_K1";
             let k2 = "txn_2_K2";
 
-            kv.upsert_kv(UpsertKVReq::update(k1, b"v1")).await?;
+            kv.upsert_kv(UpsertKV::update(k1, b"v1")).await?;
 
             // transaction by k1 and k2 condition
             let txn_key1 = k1.to_string();
@@ -733,15 +725,15 @@ impl kvapi::TestSuite {
         // 3rd case: get two key and set both key transaction
         {
             let k1 = "txn_3_K1";
-            let val1 = b"v1".to_vec();
-            let val1_new = b"v1_new".to_vec();
+            let val1 = b("v1");
+            let val1_new = b("v1_new");
 
             let k2 = "txn_3_K2";
-            let val2 = b"v1".to_vec();
+            let val2 = b("v1");
 
             // first insert k1 and k2 value
-            kv.upsert_kv(UpsertKVReq::update(k1, &val1)).await?;
-            kv.upsert_kv(UpsertKVReq::update(k2, &val2)).await?;
+            kv.upsert_kv(UpsertKV::update(k1, &val1)).await?;
+            kv.upsert_kv(UpsertKV::update(k2, &val2)).await?;
 
             // transaction by k1 and k2 condition
             let txn_key1 = k1.to_string();
@@ -848,64 +840,208 @@ impl kvapi::TestSuite {
 
         // 4th case: get one key by value and set key transaction
         {
+            /// Convert Some(KvMeta{ expire: None }) to None to simplify the comparison
+            fn norm(vs: Vec<TxnOpResponse>) -> Vec<TxnOpResponse> {
+                vs.into_iter()
+                    .map(|mut v| {
+                        //
+                        match &mut v.response {
+                            Some(Response::Get(TxnGetResponse {
+                                value: Some(pb::SeqV { meta, .. }),
+                                ..
+                            })) => {
+                                if *meta == Some(pb::KvMeta { expire_at: None }) {
+                                    *meta = None;
+                                }
+                            }
+                            Some(Response::Put(TxnPutResponse {
+                                prev_value: Some(pb::SeqV { meta, .. }),
+                                ..
+                            })) => {
+                                if *meta == Some(pb::KvMeta { expire_at: None }) {
+                                    *meta = None;
+                                }
+                            }
+                            _ => {}
+                        }
+                        v
+                    })
+                    .collect()
+            }
+
             let k1 = "txn_4_K1";
-            let val1 = b"v1".to_vec();
-            let val1_new = b"v1_new".to_vec();
 
-            // first insert k1 value
-            kv.upsert_kv(UpsertKVReq::update(k1, &val1)).await?;
+            kv.upsert_kv(UpsertKV::update(k1, b"v1")).await?;
 
-            // transaction by k1 condition
-            let txn_key1 = k1.to_string();
+            // Test eq value: success = false
 
-            let condition = vec![TxnCondition {
-                key: txn_key1.clone(),
-                expected: ConditionResult::Gt as i32,
-                target: Some(txn_condition::Target::Value(b"v".to_vec())),
-            }];
-
-            let if_then: Vec<TxnOp> = vec![
-                // change k1
-                TxnOp::put(txn_key1.clone(), val1_new.clone()),
-                // get k1
-                TxnOp {
-                    request: Some(txn_op::Request::Get(TxnGetRequest {
-                        key: txn_key1.clone(),
-                    })),
-                },
-            ];
-
-            let else_then: Vec<TxnOp> = vec![];
             let txn = TxnRequest {
-                condition,
-                if_then,
-                else_then,
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Eq, b("v10"))],
+                if_then: vec![TxnOp::put(k1, b("v2")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> =
+                vec![TxnOpResponse::get(k1, Some(SeqV::new(8, b("v1"))))];
+
+            assert_eq!(resp.success, false);
+            assert_eq!(resp.responses, expected);
+
+            // Test eq value: success = true
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Eq, b("v1"))],
+                if_then: vec![TxnOp::put(k1, b("v2")), TxnOp::get(k1)],
+                else_then: vec![],
             };
 
             let resp = kv.transaction(txn).await?;
 
             let expected: Vec<TxnOpResponse> = vec![
-                // change k1
-                TxnOpResponse {
-                    response: Some(txn_op_response::Response::Put(TxnPutResponse {
-                        key: txn_key1.clone(),
-                        prev_value: Some(pb::SeqV::from(SeqV::new(8, val1.clone()))),
-                    })),
-                },
-                // get k1
-                TxnOpResponse {
-                    response: Some(txn_op_response::Response::Get(TxnGetResponse {
-                        key: txn_key1.clone(),
-                        value: Some(pb::SeqV::from(SeqV::with_meta(
-                            9,
-                            Some(KVMeta::default()),
-                            val1_new.clone(),
-                        ))),
-                    })),
-                },
+                TxnOpResponse::put(k1, Some(pb::SeqV::new(8, b("v1")))),
+                TxnOpResponse::get(k1, Some(SeqV::new(9, b("v2")))),
             ];
 
-            self.check_transaction_responses(&resp, &expected, true);
+            assert_eq!(resp.success, true);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test less than value: success = false
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Lt, b("v2"))],
+                if_then: vec![TxnOp::put(k1, b("v3")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> =
+                vec![TxnOpResponse::get(k1, Some(SeqV::new(9, b("v2"))))];
+
+            assert_eq!(resp.success, false);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test less than value: success = true
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Lt, b("v3"))],
+                if_then: vec![TxnOp::put(k1, b("v3")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> = vec![
+                TxnOpResponse::put(k1, Some(pb::SeqV::new(9, b("v2")))),
+                TxnOpResponse::get(k1, Some(SeqV::new(10, b("v3")))),
+            ];
+
+            assert_eq!(resp.success, true);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test less equal value: success = false
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Le, b("v0"))],
+                if_then: vec![TxnOp::put(k1, b("v4")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> =
+                vec![TxnOpResponse::get(k1, Some(SeqV::new(10, b("v3"))))];
+
+            assert_eq!(resp.success, false);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test less equal value: success = true
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Le, b("v3"))],
+                if_then: vec![TxnOp::put(k1, b("v4")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> = vec![
+                TxnOpResponse::put(k1, Some(pb::SeqV::new(10, b("v3")))),
+                TxnOpResponse::get(k1, Some(SeqV::new(11, b("v4")))),
+            ];
+
+            assert_eq!(resp.success, true);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test greater than value: success = false
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Gt, b("v5"))],
+                if_then: vec![TxnOp::put(k1, b("v5")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> =
+                vec![TxnOpResponse::get(k1, Some(SeqV::new(11, b("v4"))))];
+
+            assert_eq!(resp.success, false);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test greater than value: success = true
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Gt, b("v3"))],
+                if_then: vec![TxnOp::put(k1, b("v5")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> = vec![
+                TxnOpResponse::put(k1, Some(pb::SeqV::new(11, b("v4")))),
+                TxnOpResponse::get(k1, Some(SeqV::new(12, b("v5")))),
+            ];
+
+            assert_eq!(resp.success, true);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test greater equal value: success = false
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Ge, b("v6"))],
+                if_then: vec![TxnOp::put(k1, b("v6")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> =
+                vec![TxnOpResponse::get(k1, Some(SeqV::new(12, b("v5"))))];
+
+            assert_eq!(resp.success, false);
+            assert_eq!(norm(resp.responses), norm(expected));
+
+            // Test greater equal value: success = true
+
+            let txn = TxnRequest {
+                condition: vec![TxnCondition::match_value(k1, ConditionResult::Ge, b("v5"))],
+                if_then: vec![TxnOp::put(k1, b("v6")), TxnOp::get(k1)],
+                else_then: vec![TxnOp::get(k1)],
+            };
+
+            let resp = kv.transaction(txn).await?;
+
+            let expected: Vec<TxnOpResponse> = vec![
+                TxnOpResponse::put(k1, Some(pb::SeqV::new(12, b("v5")))),
+                TxnOpResponse::get(k1, Some(SeqV::new(13, b("v6")))),
+            ];
+
+            assert_eq!(resp.success, true);
+            assert_eq!(norm(resp.responses), norm(expected));
         }
         Ok(())
     }
@@ -944,6 +1080,78 @@ impl kvapi::TestSuite {
         Ok(())
     }
 
+    /// A transaction that checks the number of keys with given prefix.
+    pub async fn kv_transaction_condition_keys_with_prefix<KV: kvapi::KVApi>(
+        &self,
+        kv: &KV,
+    ) -> anyhow::Result<()> {
+        let prefix = func_name!();
+
+        let sample_keys_prefix = format!("{}/xxx", prefix);
+
+        let sample = |suffix| format!("{}/{}", sample_keys_prefix, suffix);
+        let positive = format!("{prefix}/positive");
+        let negative = format!("{prefix}/negative");
+
+        kv.upsert_kv(UpsertKV::update(sample("a"), &b("a"))).await?;
+        kv.upsert_kv(UpsertKV::update(sample("b"), &b("b"))).await?;
+        kv.upsert_kv(UpsertKV::update(sample("c"), &b("c"))).await?;
+
+        use ConditionResult::*;
+
+        // A transaction that set positive key if succeeded,
+        // otherwise set the negative key.
+        let txn = |op: ConditionResult, n: u64| TxnRequest {
+            condition: vec![TxnCondition::match_keys_with_prefix(
+                &sample_keys_prefix,
+                op,
+                n,
+            )],
+            if_then: vec![TxnOp::put(&positive, b(format!("{op:?}")))],
+            else_then: vec![TxnOp::put(&negative, b(format!("{op:?}")))],
+        };
+
+        for (op, n, expected) in [
+            (Eq, 2, false),
+            (Eq, 3, true),
+            (Eq, 4, false),
+            (Ne, 2, true),
+            (Ne, 3, false),
+            (Ne, 4, true),
+            (Lt, 3, false),
+            (Lt, 4, true),
+            (Lt, 5, true),
+            (Le, 2, false),
+            (Le, 3, true),
+            (Le, 4, true),
+            (Gt, 2, true),
+            (Gt, 3, false),
+            (Gt, 4, false),
+            (Ge, 2, true),
+            (Ge, 3, true),
+            (Ge, 4, false),
+        ] {
+            kv.upsert_kv(UpsertKV::update(&positive, &b(""))).await?;
+            kv.upsert_kv(UpsertKV::update(&negative, &b(""))).await?;
+
+            let resp = kv.transaction(txn(op, n)).await?;
+            assert_eq!(
+                resp.success, expected,
+                "case: {op:?} {n}, expected: {expected}"
+            );
+
+            let expected_key = if expected { &positive } else { &negative };
+            let got = kv.get_kv(expected_key).await?.unwrap().data;
+            assert_eq!(
+                got,
+                b(format!("{op:?}")),
+                "case: {op:?} {n}, expected: {expected}"
+            );
+        }
+
+        Ok(())
+    }
+
     /// If `TxnDeleteRequest.match_seq` is not set,
     /// the delete operation will always be executed.
     pub async fn kv_transaction_delete_match_seq_none<KV: kvapi::KVApi>(
@@ -952,9 +1160,9 @@ impl kvapi::TestSuite {
     ) -> anyhow::Result<()> {
         info!("--- {}", func_name!());
         let key = || "txn_1_K1".to_string();
-        let val = || b"v1".to_vec();
+        let val = || b("v1");
 
-        kv.upsert_kv(UpsertKVReq::update(key(), &val())).await?;
+        kv.upsert_kv(UpsertKV::update(key(), &val())).await?;
 
         let txn = TxnRequest {
             condition: vec![],
@@ -986,9 +1194,9 @@ impl kvapi::TestSuite {
     ) -> anyhow::Result<()> {
         info!("--- {}", func_name!());
         let key = || "txn_1_K1".to_string();
-        let val = || b"v1".to_vec();
+        let val = || b("v1");
 
-        kv.upsert_kv(UpsertKVReq::update(key(), &val())).await?;
+        kv.upsert_kv(UpsertKV::update(key(), &val())).await?;
 
         let txn = TxnRequest {
             condition: vec![],
@@ -1024,9 +1232,9 @@ impl kvapi::TestSuite {
     ) -> anyhow::Result<()> {
         info!("--- {}", func_name!());
         let key = || "txn_1_K1".to_string();
-        let val = || b"v1".to_vec();
+        let val = || b("v1");
 
-        kv.upsert_kv(UpsertKVReq::update(key(), &val())).await?;
+        kv.upsert_kv(UpsertKV::update(key(), &val())).await?;
 
         let txn = TxnRequest {
             condition: vec![],
@@ -1061,26 +1269,26 @@ impl kvapi::TestSuite {
     ) -> anyhow::Result<()> {
         let mut values = vec![];
         {
-            kv1.upsert_kv(UpsertKVReq::update("t", b"t")).await?;
+            kv1.upsert_kv(UpsertKV::update("t", b"t")).await?;
 
             for i in 0..9 {
                 let key = format!("__users/{}", i);
                 let val = format!("val_{}", i);
                 values.push(val.clone());
                 info!("--- Start upsert-kv: {}", key);
-                kv1.upsert_kv(UpsertKVReq::update(&key, val.as_bytes()))
+                kv1.upsert_kv(UpsertKV::update(&key, val.as_bytes()))
                     .await?;
                 info!("--- Done upsert-kv: {}", key);
             }
 
-            kv1.upsert_kv(UpsertKVReq::update("v", b"v")).await?;
+            kv1.upsert_kv(UpsertKV::update("v", b"v")).await?;
         }
 
         info!("--- test get on other node");
         {
             let res = kv2.get_kv("t").await?;
             let res = res.unwrap();
-            assert_eq!(b"t".to_vec(), res.data);
+            assert_eq!(b("t"), res.data);
         }
 
         info!("--- test mget on other node");
@@ -1092,7 +1300,7 @@ impl kvapi::TestSuite {
                     Some(SeqV {
                         seq: 11,
                         meta: None,
-                        data: b"v".to_vec()
+                        data: b("v")
                     })
                 ],
                 res
@@ -1116,6 +1324,6 @@ impl kvapi::TestSuite {
     }
 }
 
-fn b(s: &str) -> Vec<u8> {
-    s.as_bytes().to_vec()
+fn b(x: impl ToString) -> Vec<u8> {
+    x.to_string().as_bytes().to_vec()
 }

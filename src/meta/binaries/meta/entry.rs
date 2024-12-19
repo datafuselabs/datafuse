@@ -20,6 +20,7 @@ use std::time::Duration;
 use anyerror::AnyError;
 use databend_common_base::base::StopHandle;
 use databend_common_base::base::Stoppable;
+use databend_common_base::version::DATABEND_COMMIT_VERSION;
 use databend_common_grpc::RpcClientConf;
 use databend_common_meta_raft_store::ondisk::OnDisk;
 use databend_common_meta_raft_store::ondisk::DATA_VERSION;
@@ -56,8 +57,9 @@ pub async fn entry(conf: Config) -> anyhow::Result<()> {
     if run_cmd(&conf).await {
         return Ok(());
     }
+    let binary_version = DATABEND_COMMIT_VERSION.clone();
 
-    set_panic_hook();
+    set_panic_hook(binary_version);
 
     // app name format: node_id@cluster_id
     let app_name_shuffle = format!(
@@ -197,7 +199,7 @@ pub async fn entry(conf: Config) -> anyhow::Result<()> {
 }
 
 async fn do_register(meta_node: &Arc<MetaNode>, conf: &Config) -> Result<(), MetaAPIError> {
-    let node_id = meta_node.sto.id;
+    let node_id = meta_node.raft_store.id;
     let raft_endpoint = conf.raft_config.raft_api_advertise_host_endpoint();
     let node = Node::new(node_id, raft_endpoint)
         .with_grpc_advertise_address(conf.grpc_api_advertise_address());

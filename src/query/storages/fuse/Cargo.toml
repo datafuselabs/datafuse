@@ -11,7 +11,7 @@ doctest = false
 test = true
 
 [dependencies]
-databend-common-arrow = { workspace = true }
+
 databend-common-base = { workspace = true }
 databend-common-catalog = { workspace = true }
 databend-common-exception = { workspace = true }
@@ -23,6 +23,7 @@ databend-common-license = { workspace = true }
 databend-common-meta-app = { workspace = true }
 databend-common-meta-types = { workspace = true }
 databend-common-metrics = { workspace = true }
+databend-common-native = { workspace = true }
 databend-common-pipeline-core = { workspace = true }
 databend-common-pipeline-sinks = { workspace = true }
 databend-common-pipeline-sources = { workspace = true }
@@ -59,6 +60,7 @@ itertools = { workspace = true }
 jsonb = { workspace = true }
 log = { workspace = true }
 opendal = { workspace = true }
+parking_lot = { workspace = true }
 parquet = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }

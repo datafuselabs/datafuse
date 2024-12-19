@@ -27,7 +27,6 @@ use databend_common_ast::parser::parse_sql;
 use databend_common_ast::parser::tokenize_sql;
 use databend_common_ast::parser::Dialect;
 use databend_common_catalog::catalog::CatalogManager;
-use databend_common_catalog::query_kind::QueryKind;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
@@ -42,6 +41,15 @@ use databend_common_license::license_manager::LicenseManagerSwitch;
 use databend_common_meta_app::principal::FileFormatOptionsReader;
 use databend_common_meta_app::principal::FileFormatParams;
 use databend_common_meta_app::principal::StageFileFormatType;
+use databend_common_meta_app::principal::StageInfo;
+use databend_common_metrics::storage::metrics_inc_copy_purge_files_cost_milliseconds;
+use databend_common_metrics::storage::metrics_inc_copy_purge_files_counter;
+use databend_common_storage::init_stage_operator;
+use databend_storages_common_io::Files;
+use databend_storages_common_session::TxnManagerRef;
+use databend_storages_common_table_meta::table::is_stream_name;
+use log::error;
+use log::info;
 use log::warn;
 
 use super::Finder;
@@ -67,6 +75,7 @@ use crate::plans::RewriteKind;
 use crate::plans::ShowConnectionsPlan;
 use crate::plans::ShowFileFormatsPlan;
 use crate::plans::ShowRolesPlan;
+use crate::plans::UseCatalogPlan;
 use crate::plans::UseDatabasePlan;
 use crate::plans::Visitor;
 use crate::BindContext;
@@ -97,6 +106,7 @@ pub struct Binder {
     /// For the recursive cte, the cte table name occurs in the recursive cte definition and main query
     /// if meet recursive cte table name in cte definition, set `bind_recursive_cte` true and treat it as `CteScan`.
     pub bind_recursive_cte: bool,
+    pub m_cte_table_name: HashMap<String, String>,
 
     pub enable_result_cache: bool,
 
@@ -123,6 +133,7 @@ impl<'a> Binder {
             metadata,
             expression_scan_context: ExpressionScanContext::new(),
             bind_recursive_cte: false,
+            m_cte_table_name: HashMap::new(),
             enable_result_cache,
             subquery_executor: None,
         }
@@ -139,6 +150,15 @@ impl<'a> Binder {
     #[async_backtrace::framed]
     #[fastrace::trace]
     pub async fn bind(mut self, stmt: &Statement) -> Result<Plan> {
+        if !stmt.allowed_in_multi_statement() {
+            execute_commit_statement(self.ctx.clone()).await?;
+        }
+        if !stmt.is_transaction_command() && self.ctx.txn_mgr().lock().is_fail() {
+            let err = ErrorCode::CurrentTransactionIsAborted(
+                "current transaction is aborted, commands ignored until end of transaction block",
+            );
+            return Err(err);
+        }
         let start = Instant::now();
         self.ctx.set_status_info("binding");
         let mut bind_context = BindContext::new();
@@ -161,8 +181,6 @@ impl<'a> Binder {
             Statement::Query(query) => {
                 let (mut s_expr, bind_context) = self.bind_query(bind_context, query)?;
 
-                // Wrap `LogicalMaterializedCte` to `s_expr`
-                s_expr = bind_context.cte_context.wrap_m_cte(s_expr);
                 // Remove unused cache columns and join conditions and construct ExpressionScan's child.
                 (s_expr, _) = self.construct_expression_scan(&s_expr, self.metadata.clone())?;
                 let formatted_ast = if self.ctx.get_settings().get_enable_query_result_cache()? {
@@ -238,6 +256,12 @@ impl<'a> Binder {
             Statement::ShowCreateCatalog(stmt) => self.bind_show_create_catalogs(stmt).await?,
             Statement::CreateCatalog(stmt) => self.bind_create_catalog(stmt).await?,
             Statement::DropCatalog(stmt) => self.bind_drop_catalog(stmt).await?,
+            Statement::UseCatalog {catalog} => {
+                let catalog = normalize_identifier(catalog, &self.name_resolution_ctx).name;
+                Plan::UseCatalog(Box::new(UseCatalogPlan {
+                    catalog,
+                }))
+            }
 
             // Databases
             Statement::ShowDatabases(stmt) => self.bind_show_databases(bind_context, stmt).await?,
@@ -625,17 +649,20 @@ impl<'a> Binder {
                 }
         };
 
-        match plan.kind() {
-            QueryKind::Query { .. } | QueryKind::Explain { .. } => {}
+        match &plan {
+            Plan::Explain { .. }
+            | Plan::ExplainAnalyze { .. }
+            | Plan::ExplainAst { .. }
+            | Plan::ExplainSyntax { .. }
+            | Plan::Query { .. } => {}
+            Plan::CreateTable(plan)
+                if is_stream_name(&plan.table, self.ctx.get_id().replace("-", "").as_str()) => {}
             _ => {
-                let meta_data_guard = self.metadata.read();
-                let tables = meta_data_guard.tables();
-                for t in tables {
-                    if t.is_consume() {
-                        return Err(ErrorCode::SyntaxException(
-                            "WITH CONSUME only allowed in query",
-                        ));
-                    }
+                let consume_streams = self.ctx.get_consume_streams(true)?;
+                if !consume_streams.is_empty() {
+                    return Err(ErrorCode::SyntaxException(
+                        "WITH CONSUME only allowed in query",
+                    ));
                 }
             }
         }
@@ -951,5 +978,107 @@ impl<'a> Binder {
             );
         }
         Ok(s_expr)
+    }
+}
+
+struct ClearTxnManagerGuard(TxnManagerRef);
+
+impl Drop for ClearTxnManagerGuard {
+    fn drop(&mut self) {
+        self.0.lock().clear();
+    }
+}
+
+pub async fn execute_commit_statement(ctx: Arc<dyn TableContext>) -> Result<()> {
+    // After commit statement, current session should be in auto commit mode, no matter update meta success or not.
+    // Use this guard to clear txn manager before return.
+    let _guard = ClearTxnManagerGuard(ctx.txn_mgr().clone());
+    let is_active = ctx.txn_mgr().lock().is_active();
+    if is_active {
+        let catalog = ctx.get_default_catalog()?;
+
+        let req = ctx.txn_mgr().lock().req();
+
+        let update_summary = {
+            let table_descriptions = req
+                .update_table_metas
+                .iter()
+                .map(|(req, _)| (req.table_id, req.seq, req.new_table_meta.engine.clone()))
+                .collect::<Vec<_>>();
+            let stream_descriptions = req
+                .update_stream_metas
+                .iter()
+                .map(|s| (s.stream_id, s.seq, "stream"))
+                .collect::<Vec<_>>();
+            (table_descriptions, stream_descriptions)
+        };
+
+        let mismatched_tids = {
+            ctx.txn_mgr().lock().set_auto_commit();
+            let ret = catalog.retryable_update_multi_table_meta(req).await;
+            if let Err(ref e) = ret {
+                // other errors may occur, especially the version mismatch of streams,
+                // let's log it here for the convenience of diagnostics
+                error!(
+                    "Non-recoverable fault occurred during updating tables. {}",
+                    e
+                );
+            }
+            ret?
+        };
+
+        match &mismatched_tids {
+            Ok(_) => {
+                info!(
+                    "COMMIT: Commit explicit transaction success, targets updated {:?}",
+                    update_summary
+                );
+            }
+            Err(e) => {
+                let err_msg = format!(
+                    "COMMIT: Table versions mismatched in multi statement transaction, conflict tables: {:?}",
+                    e.iter()
+                        .map(|(tid, seq, meta)| (tid, seq, &meta.engine))
+                        .collect::<Vec<_>>()
+                );
+                return Err(ErrorCode::TableVersionMismatched(err_msg));
+            }
+        }
+        let need_purge_files = ctx.txn_mgr().lock().need_purge_files();
+        for (stage_info, files) in need_purge_files {
+            try_purge_files(ctx.clone(), &stage_info, &files).await;
+        }
+    }
+    Ok(())
+}
+
+#[async_backtrace::framed]
+async fn try_purge_files(ctx: Arc<dyn TableContext>, stage_info: &StageInfo, files: &[String]) {
+    let start = Instant::now();
+    let op = init_stage_operator(stage_info);
+
+    match op {
+        Ok(op) => {
+            let file_op = Files::create(ctx, op);
+            if let Err(e) = file_op.remove_file_in_batch(files).await {
+                error!("Failed to delete file: {:?}, error: {}", files, e);
+            }
+        }
+        Err(e) => {
+            error!("Failed to get stage table op, error: {}", e);
+        }
+    }
+
+    let elapsed = start.elapsed();
+    info!(
+        "purged files: number {}, time used {:?} ",
+        files.len(),
+        elapsed
+    );
+
+    // Perf.
+    {
+        metrics_inc_copy_purge_files_counter(files.len() as u32);
+        metrics_inc_copy_purge_files_cost_milliseconds(elapsed.as_millis() as u32);
     }
 }

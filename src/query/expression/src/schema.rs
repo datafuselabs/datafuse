@@ -18,7 +18,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-use databend_common_arrow::arrow::datatypes::Schema as ArrowSchema;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use itertools::Itertools;
@@ -208,6 +207,7 @@ pub enum TableDataType {
     Variant,
     Geometry,
     Geography,
+    Interval,
 }
 
 impl DataSchema {
@@ -340,12 +340,6 @@ impl DataSchema {
     #[must_use]
     pub fn project_by_fields(&self, fields: Vec<DataField>) -> Self {
         Self::new_from(fields, self.meta().clone())
-    }
-
-    pub fn to_arrow(&self) -> ArrowSchema {
-        let fields = self.fields().iter().map(|f| f.into()).collect::<Vec<_>>();
-
-        ArrowSchema::from(fields).with_metadata(self.metadata.clone())
     }
 }
 
@@ -1185,6 +1179,7 @@ impl From<&TableDataType> for DataType {
             TableDataType::Boolean => DataType::Boolean,
             TableDataType::Binary => DataType::Binary,
             TableDataType::String => DataType::String,
+            TableDataType::Interval => DataType::Interval,
             TableDataType::Number(ty) => DataType::Number(*ty),
             TableDataType::Decimal(ty) => DataType::Decimal(*ty),
             TableDataType::Timestamp => DataType::Timestamp,
@@ -1320,6 +1315,17 @@ impl TableDataType {
             _ => 1,
         }
     }
+
+    pub fn is_physical_binary(&self) -> bool {
+        matches!(
+            self,
+            TableDataType::Binary
+                | TableDataType::Bitmap
+                | TableDataType::Variant
+                | TableDataType::Geometry
+                | TableDataType::Geography
+        )
+    }
 }
 
 // for merge into not matched clauses, when there are multi inserts, they maybe
@@ -1426,6 +1432,7 @@ pub fn infer_schema_type(data_type: &DataType) -> Result<TableDataType> {
         DataType::Timestamp => Ok(TableDataType::Timestamp),
         DataType::Decimal(x) => Ok(TableDataType::Decimal(*x)),
         DataType::Date => Ok(TableDataType::Date),
+        DataType::Interval => Ok(TableDataType::Interval),
         DataType::Nullable(inner_type) => Ok(TableDataType::Nullable(Box::new(infer_schema_type(
             inner_type,
         )?))),

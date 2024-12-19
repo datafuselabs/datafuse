@@ -52,6 +52,12 @@ impl From<std::net::AddrParseError> for ErrorCode {
     }
 }
 
+impl From<cidr::errors::NetworkParseError> for ErrorCode {
+    fn from(error: cidr::errors::NetworkParseError) -> Self {
+        ErrorCode::BadAddressFormat(format!("Bad network format, cause: {}", error))
+    }
+}
+
 impl From<std::str::Utf8Error> for ErrorCode {
     fn from(error: std::str::Utf8Error) -> Self {
         ErrorCode::Internal(format!("Invalid Utf8, cause: {}", error))
@@ -104,16 +110,6 @@ impl From<std::num::ParseFloatError> for ErrorCode {
 impl From<std::num::TryFromIntError> for ErrorCode {
     fn from(error: std::num::TryFromIntError) -> Self {
         ErrorCode::from_std_error(error)
-    }
-}
-
-impl From<databend_common_arrow::arrow::error::Error> for ErrorCode {
-    fn from(error: databend_common_arrow::arrow::error::Error) -> Self {
-        use databend_common_arrow::arrow::error::Error;
-        match error {
-            Error::NotYetImplemented(v) => ErrorCode::Unimplemented(format!("arrow: {v}")),
-            v => ErrorCode::from_std_error(v),
-        }
     }
 }
 
@@ -363,6 +359,13 @@ impl From<tonic::Status> for ErrorCode {
             tonic::Code::Unknown => {
                 let details = status.details();
                 if details.is_empty() {
+                    if status.source().is_some_and(|e| e.is::<hyper::Error>()) {
+                        return ErrorCode::CannotConnectNode(format!(
+                            "{}, source: {:?}",
+                            status.message(),
+                            status.source()
+                        ));
+                    }
                     return ErrorCode::UnknownException(format!(
                         "{}, source: {:?}",
                         status.message(),
@@ -418,5 +421,11 @@ impl From<ErrorCode> for tonic::Status {
 impl From<sqlx::Error> for ErrorCode {
     fn from(error: sqlx::Error) -> Self {
         ErrorCode::DictionarySourceError(format!("Dictionary Sqlx Error, cause: {}", error))
+    }
+}
+
+impl From<redis::RedisError> for ErrorCode {
+    fn from(error: redis::RedisError) -> Self {
+        ErrorCode::DictionarySourceError(format!("Dictionary Redis Error, cause: {}", error))
     }
 }

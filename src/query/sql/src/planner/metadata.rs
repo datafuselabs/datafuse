@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
-use ahash::HashMap;
 use databend_common_ast::ast::Expr;
 use databend_common_ast::ast::Literal;
 use databend_common_catalog::plan::DataSourcePlan;
@@ -74,6 +74,11 @@ pub struct Metadata {
     table_row_id_index: HashMap<IndexType, IndexType>,
     agg_indexes: HashMap<String, Vec<(u64, String, SExpr)>>,
     max_column_position: usize, // for CSV
+
+    /// Scan id of each scan operator.
+    next_scan_id: usize,
+    /// Mappings from base column index to scan id.
+    base_column_scan_id: HashMap<IndexType, usize>,
 }
 
 impl Metadata {
@@ -293,7 +298,7 @@ impl Metadata {
         let table_index = base_column.table_index;
         let source_column_name = base_column.column_name.clone();
         let source_column_index = base_column.column_index;
-        // The type of source coumn is variant, not a nested type, must have `column_id`.
+        // The type of source column is variant, not a nested type, must have `column_id`.
         let source_column_id = base_column.column_id.unwrap();
 
         // If the function that generates the virtual column already has an index,
@@ -348,9 +353,10 @@ impl Metadata {
         source_of_view: bool,
         source_of_index: bool,
         source_of_stage: bool,
-        consume: bool,
+        cte_suffix_name: Option<String>,
     ) -> IndexType {
         let table_name = table_meta.name().to_string();
+        let table_name = Self::remove_cte_suffix(table_name, cte_suffix_name);
 
         let table_index = self.tables.len();
         // If exists table alias name, use it instead of origin name
@@ -364,7 +370,6 @@ impl Metadata {
             source_of_view,
             source_of_index,
             source_of_stage,
-            consume,
         };
         self.tables.push(table_entry);
         let table_schema = table_meta.schema_with_stream();
@@ -462,8 +467,32 @@ impl Metadata {
     pub fn set_max_column_position(&mut self, max_pos: usize) {
         self.max_column_position = max_pos
     }
+
     pub fn get_max_column_position(&self) -> usize {
         self.max_column_position
+    }
+
+    pub fn next_scan_id(&mut self) -> usize {
+        let next_scan_id = self.next_scan_id;
+        self.next_scan_id += 1;
+        next_scan_id
+    }
+
+    pub fn add_base_column_scan_id(&mut self, base_column_scan_id: HashMap<usize, usize>) {
+        self.base_column_scan_id.extend(base_column_scan_id);
+    }
+
+    pub fn base_column_scan_id(&self, column_index: usize) -> Option<usize> {
+        self.base_column_scan_id.get(&column_index).cloned()
+    }
+
+    fn remove_cte_suffix(mut table_name: String, cte_suffix_name: Option<String>) -> String {
+        if let Some(suffix) = cte_suffix_name {
+            if table_name.ends_with(&suffix) {
+                table_name.truncate(table_name.len() - suffix.len() - 1);
+            }
+        }
+        table_name
     }
 }
 
@@ -481,9 +510,6 @@ pub struct TableEntry {
 
     source_of_stage: bool,
     table: Arc<dyn Table>,
-
-    /// If this table need to be consumed.
-    consume: bool,
 }
 
 impl Debug for TableEntry {
@@ -516,7 +542,6 @@ impl TableEntry {
             source_of_view: false,
             source_of_index: false,
             source_of_stage: false,
-            consume: false,
         }
     }
 
@@ -565,9 +590,8 @@ impl TableEntry {
         self.source_of_index
     }
 
-    /// Return true if this table need to be consumed.
-    pub fn is_consume(&self) -> bool {
-        self.consume
+    pub fn update_table_index(&mut self, table_index: IndexType) {
+        self.index = table_index;
     }
 }
 

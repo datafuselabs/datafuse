@@ -16,8 +16,8 @@ use std::alloc::Layout;
 use std::fmt;
 use std::sync::Arc;
 
-use databend_common_arrow::arrow::bitmap::Bitmap;
 use databend_common_exception::Result;
+use databend_common_expression::types::Bitmap;
 use databend_common_expression::types::DataType;
 use databend_common_expression::utils::column_merge_validity;
 use databend_common_expression::ColumnBuilder;
@@ -117,12 +117,14 @@ impl<const NULLABLE_RESULT: bool> AggregateFunction for AggregateNullUnaryAdapto
         let validity = column_merge_validity(col, validity.cloned());
         let not_null_column = &[col.remove_nullable()];
         let not_null_column = not_null_column.into();
+        let validity = Bitmap::map_all_sets_to_none(validity);
+
         self.nested
             .accumulate(place, not_null_column, validity.as_ref(), input_rows)?;
 
         if validity
             .as_ref()
-            .map(|c| c.unset_bits() != input_rows)
+            .map(|c| c.null_count() != input_rows)
             .unwrap_or(true)
         {
             self.set_flag(place, 1);
@@ -144,9 +146,9 @@ impl<const NULLABLE_RESULT: bool> AggregateFunction for AggregateNullUnaryAdapto
         let not_null_columns = not_null_columns.into();
 
         match validity {
-            Some(v) if v.unset_bits() > 0 => {
+            Some(v) if v.null_count() > 0 => {
                 // all nulls
-                if v.unset_bits() == v.len() {
+                if v.null_count() == v.len() {
                     return Ok(());
                 }
 
@@ -177,9 +179,9 @@ impl<const NULLABLE_RESULT: bool> AggregateFunction for AggregateNullUnaryAdapto
         let not_null_columns = not_null_columns.into();
 
         match validity {
-            Some(v) if v.unset_bits() > 0 => {
+            Some(v) if v.null_count() > 0 => {
                 // all nulls
-                if v.unset_bits() == v.len() {
+                if v.null_count() == v.len() {
                     return Ok(());
                 }
 

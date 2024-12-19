@@ -146,7 +146,7 @@ impl Binder {
                 false,
                 false,
                 false,
-                false,
+                None,
             );
 
             let (s_expr, mut bind_context) =
@@ -208,7 +208,7 @@ impl Binder {
                 false,
                 false,
                 false,
-                false,
+                None,
             );
 
             let (s_expr, mut bind_context) =
@@ -352,10 +352,12 @@ impl Binder {
                     }];
                     let mut select_list =
                         self.normalize_select_list(&mut bind_context, &select_list)?;
-                    // analyze set returning functions
+                    // analyze Set-returning functions.
                     self.analyze_project_set_select(&mut bind_context, &mut select_list)?;
-                    // bind set returning functions
-                    let srf_expr = self.bind_project_set(&mut bind_context, child)?;
+                    // bind Set-returning functions.
+                    let srf_expr = self.bind_project_set(&mut bind_context, child, false)?;
+                    // clear Set-returning functions, avoid duplicate bind.
+                    bind_context.srf_info = Default::default();
 
                     if let Some(item) = select_list.items.pop() {
                         let srf_result = item.scalar;

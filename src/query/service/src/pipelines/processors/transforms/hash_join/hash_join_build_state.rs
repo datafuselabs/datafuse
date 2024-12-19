@@ -20,10 +20,11 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use databend_common_arrow::arrow::bitmap::Bitmap;
 use databend_common_base::base::tokio::sync::Barrier;
 use databend_common_catalog::runtime_filter_info::RuntimeFilterInfo;
+use databend_common_catalog::runtime_filter_info::RuntimeFilterReady;
 use databend_common_catalog::table_context::TableContext;
+use databend_common_column::bitmap::Bitmap;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_expression::arrow::and_validities;
@@ -142,7 +143,7 @@ impl HashJoinBuildState {
                     .remove_nullable()
             })
             .collect::<Vec<_>>();
-        let method = DataBlock::choose_hash_method_with_types(&hash_key_types, false)?;
+        let method = DataBlock::choose_hash_method_with_types(&hash_key_types)?;
         let mut enable_bloom_runtime_filter = false;
         let mut enable_inlist_runtime_filter = false;
         let mut enable_min_max_runtime_filter = false;
@@ -331,6 +332,7 @@ impl HashJoinBuildState {
                     .build_watcher
                     .send(HashTableType::Empty)
                     .map_err(|_| ErrorCode::TokioError("build_watcher channel is closed"))?;
+                self.set_bloom_filter_ready(false)?;
                 return Ok(());
             }
 
@@ -348,6 +350,8 @@ impl HashJoinBuildState {
             // If spilling happened, skip adding runtime filter, because probe data is ready and spilled.
             if self.hash_join_state.spilled_partitions.read().is_empty() {
                 self.add_runtime_filter(&build_chunks, build_num_rows)?;
+            } else {
+                self.set_bloom_filter_ready(false)?;
             }
 
             // Divide the finalize phase into multiple tasks.
@@ -411,7 +415,6 @@ impl HashJoinBuildState {
                     }),
                     std::mem::size_of::<RawEntry<U256>>(),
                 ),
-                HashMethodKind::DictionarySerializer(_) => unimplemented!(),
             };
             self.entry_size.store(entry_size, Ordering::Release);
             let hash_table = unsafe { &mut *self.hash_join_state.hash_table.get() };
@@ -448,7 +451,7 @@ impl HashJoinBuildState {
                 let build_keys_iter = $method.build_keys_iter(&keys_state)?;
 
                 let valid_num = match &$valids {
-                    Some(valids) => valids.len() - valids.unset_bits(),
+                    Some(valids) => valids.len() - valids.null_count(),
                     None => $chunk.num_rows(),
                 };
                 let mut local_space: Vec<u8> = Vec::with_capacity(valid_num * entry_size);
@@ -515,14 +518,14 @@ impl HashJoinBuildState {
 
                 let space_size = match &keys_state {
                     // safe to unwrap(): offset.len() >= 1.
-                    KeysState::Column(Column::String(col)) => col.current_buffer_len(),
+                    KeysState::Column(Column::String(col)) => col.total_bytes_len(),
                     KeysState::Column(
                         Column::Binary(col) | Column::Variant(col) | Column::Bitmap(col),
                     ) => col.data().len(),
                     _ => unreachable!(),
                 };
                 let valid_num = match &$valids {
-                    Some(valids) => valids.len() - valids.unset_bits(),
+                    Some(valids) => valids.len() - valids.null_count(),
                     None => $chunk.num_rows(),
                 };
                 let mut entry_local_space: Vec<u8> = Vec::with_capacity(valid_num * entry_size);
@@ -688,10 +691,10 @@ impl HashJoinBuildState {
                 });
             match valids {
                 ControlFlow::Continue(Some(valids)) | ControlFlow::Break(Some(valids)) => {
-                    if valids.unset_bits() == valids.len() {
+                    if valids.null_count() == valids.len() {
                         return Ok(());
                     }
-                    if valids.unset_bits() != 0 {
+                    if valids.null_count() != 0 {
                         Some(valids)
                     } else {
                         None
@@ -713,7 +716,7 @@ impl HashJoinBuildState {
             JoinType::RightMark => {
                 if !_has_null && !keys_columns.is_empty() {
                     if let Some(validity) = keys_columns[0].validity().1 {
-                        if validity.unset_bits() > 0 {
+                        if validity.null_count() > 0 {
                             _has_null = true;
                             let mut has_null_ref = self
                                 .hash_join_state
@@ -848,7 +851,52 @@ impl HashJoinBuildState {
         Ok(())
     }
 
+    pub fn add_runtime_filter_ready(&self) {
+        if self.ctx.get_cluster().is_empty() {
+            return;
+        }
+
+        let mut wait_runtime_filter_table_indexes = HashSet::new();
+        for (build_key, probe_key, table_index) in self
+            .hash_join_state
+            .hash_join_desc
+            .build_keys
+            .iter()
+            .zip(self.hash_join_state.hash_join_desc.probe_keys_rt.iter())
+            .filter_map(|(b, p)| p.as_ref().map(|(p, index)| (b, p, index)))
+        {
+            if !build_key.data_type().remove_nullable().is_numeric()
+                && !build_key.data_type().remove_nullable().is_string()
+            {
+                continue;
+            }
+            if let Expr::ColumnRef { .. } = probe_key {
+                wait_runtime_filter_table_indexes.insert(*table_index);
+            }
+        }
+
+        let build_state = unsafe { &mut *self.hash_join_state.build_state.get() };
+        let runtime_filter_ready = &mut build_state.runtime_filter_ready;
+        for table_index in wait_runtime_filter_table_indexes.into_iter() {
+            let ready = Arc::new(RuntimeFilterReady::default());
+            runtime_filter_ready.push(ready.clone());
+            self.ctx.set_runtime_filter_ready(table_index, ready);
+        }
+    }
+
+    pub fn set_bloom_filter_ready(&self, ready: bool) -> Result<()> {
+        let build_state = unsafe { &mut *self.hash_join_state.build_state.get() };
+        for runtime_filter_ready in build_state.runtime_filter_ready.iter() {
+            runtime_filter_ready
+                .runtime_filter_watcher
+                .send(Some(ready))
+                .map_err(|_| ErrorCode::TokioError("watcher channel is closed"))?;
+        }
+        Ok(())
+    }
+
     fn add_runtime_filter(&self, build_chunks: &[DataBlock], build_num_rows: usize) -> Result<()> {
+        let mut bloom_filter_ready = false;
         for (build_key, probe_key, table_index) in self
             .hash_join_state
             .hash_join_desc
@@ -879,9 +927,11 @@ impl HashJoinBuildState {
                 )?;
             }
             if !runtime_filter.is_empty() {
+                bloom_filter_ready |= !runtime_filter.is_blooms_empty();
                 self.ctx.set_runtime_filter((*table_index, runtime_filter));
             }
         }
+        self.set_bloom_filter_ready(bloom_filter_ready)?;
         Ok(())
     }
 
@@ -916,7 +966,7 @@ impl HashJoinBuildState {
             // Generate bloom filter using build column
             let data_type = build_key.data_type();
             let num_rows = build_key_column.len();
-            let method = DataBlock::choose_hash_method_with_types(&[data_type.clone()], false)?;
+            let method = DataBlock::choose_hash_method_with_types(&[data_type.clone()])?;
             let mut hashes = HashSet::with_capacity(num_rows);
             let key_columns = &[build_key_column];
             hash_by_method(&method, key_columns.into(), num_rows, &mut hashes)?;

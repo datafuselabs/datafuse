@@ -24,12 +24,10 @@ use std::time::SystemTime;
 use dashmap::DashMap;
 use databend_common_base::base::Progress;
 use databend_common_base::base::ProgressValues;
-use databend_common_base::runtime::Runtime;
 use databend_common_exception::ErrorCode;
 use databend_common_exception::Result;
 use databend_common_exception::ResultExt;
 use databend_common_expression::BlockThresholds;
-use databend_common_expression::DataBlock;
 use databend_common_expression::Expr;
 use databend_common_expression::FunctionContext;
 use databend_common_expression::Scalar;
@@ -74,10 +72,9 @@ use crate::plan::PartInfoPtr;
 use crate::plan::Partitions;
 use crate::query_kind::QueryKind;
 use crate::runtime_filter_info::RuntimeFilterInfo;
+use crate::runtime_filter_info::RuntimeFilterReady;
 use crate::statistics::data_cache_statistics::DataCacheMetrics;
 use crate::table::Table;
-
-pub type MaterializedCtesBlocks = Arc<RwLock<HashMap<(usize, usize), Arc<RwLock<Vec<DataBlock>>>>>>;
 
 pub struct ContextError;
 
@@ -223,7 +220,10 @@ pub trait TableContext: Send + Sync {
         check_current_role_only: bool,
     ) -> Result<()>;
     async fn get_available_roles(&self) -> Result<Vec<RoleInfo>>;
-    async fn get_visibility_checker(&self) -> Result<GrantObjectVisibilityChecker>;
+    async fn get_visibility_checker(
+        &self,
+        ignore_ownership: bool,
+    ) -> Result<GrantObjectVisibilityChecker>;
     fn get_fuse_version(&self) -> String;
     fn get_format_settings(&self) -> Result<FormatSettings>;
     fn get_tenant(&self) -> Tenant;
@@ -258,7 +258,9 @@ pub trait TableContext: Send + Sync {
     async fn get_connection(&self, name: &str) -> Result<UserDefinedConnection>;
 
     async fn get_table(&self, catalog: &str, database: &str, table: &str)
-    -> Result<Arc<dyn Table>>;
+        -> Result<Arc<dyn Table>>;
+
+    fn evict_table_from_cache(&self, catalog: &str, database: &str, table: &str) -> Result<()>;
 
     async fn get_table_with_batch(
         &self,
@@ -276,19 +278,6 @@ pub trait TableContext: Send + Sync {
         files: &[StageFileInfo],
         max_files: Option<usize>,
     ) -> Result<FilteredCopyFiles>;
-
-    fn set_materialized_cte(
-        &self,
-        idx: (usize, usize),
-        mem_table: Arc<RwLock<Vec<DataBlock>>>,
-    ) -> Result<()>;
-
-    fn get_materialized_cte(
-        &self,
-        idx: (usize, usize),
-    ) -> Result<Option<Arc<RwLock<Vec<DataBlock>>>>>;
-
-    fn get_materialized_ctes(&self) -> MaterializedCtesBlocks;
 
     fn add_segment_location(&self, segment_loc: Location) -> Result<()>;
 
@@ -316,6 +305,14 @@ pub trait TableContext: Send + Sync {
     fn get_query_profiles(&self) -> Vec<PlanProfile>;
 
     fn set_runtime_filter(&self, filters: (usize, RuntimeFilterInfo));
+
+    fn set_runtime_filter_ready(&self, table_index: usize, ready: Arc<RuntimeFilterReady>);
+
+    fn get_runtime_filter_ready(&self, table_index: usize) -> Vec<Arc<RuntimeFilterReady>>;
+
+    fn set_wait_runtime_filter(&self, table_index: usize, need_to_wait: bool);
+
+    fn get_wait_runtime_filter(&self, table_index: usize) -> bool;
 
     fn clear_runtime_filter(&self);
 
@@ -356,6 +353,7 @@ pub trait TableContext: Send + Sync {
         _files_info: StageFilesInfo,
         _files_to_copy: Option<Vec<StageFileInfo>>,
         _max_column_position: usize,
+        _case_sensitive: bool,
     ) -> Result<Arc<dyn Table>> {
         unimplemented!()
     }
@@ -375,7 +373,17 @@ pub trait TableContext: Send + Sync {
     fn is_temp_table(&self, catalog_name: &str, database_name: &str, table_name: &str) -> bool;
     fn get_shared_settings(&self) -> Arc<Settings>;
 
-    fn get_runtime(&self) -> Result<Arc<Runtime>>;
+    fn add_m_cte_temp_table(&self, database_name: &str, table_name: &str);
+
+    async fn drop_m_cte_temp_table(&self) -> Result<()>;
+
+    fn add_streams_ref(&self, _catalog: &str, _database: &str, _stream: &str, _consume: bool) {
+        unimplemented!()
+    }
+
+    fn get_consume_streams(&self, _query: bool) -> Result<Vec<Arc<dyn Table>>> {
+        unimplemented!()
+    }
 }
 
 pub type AbortChecker = Arc<dyn CheckAbort + Send + Sync>;

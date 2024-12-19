@@ -47,7 +47,7 @@ pub struct MetaForwarder<'a> {
 impl<'a> MetaForwarder<'a> {
     pub fn new(meta_node: &'a MetaNode) -> Self {
         Self {
-            sto: &meta_node.sto,
+            sto: &meta_node.raft_store,
             raft: &meta_node.raft,
         }
     }
@@ -80,7 +80,7 @@ impl<'a> MetaForwarder<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Forwarder<ForwardRequestBody> for MetaForwarder<'a> {
+impl Forwarder<ForwardRequestBody> for MetaForwarder<'_> {
     #[fastrace::trace]
     async fn forward(
         &self,
@@ -105,7 +105,7 @@ impl<'a> Forwarder<ForwardRequestBody> for MetaForwarder<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Forwarder<MetaGrpcReadReq> for MetaForwarder<'a> {
+impl Forwarder<MetaGrpcReadReq> for MetaForwarder<'_> {
     #[fastrace::trace]
     async fn forward(
         &self,

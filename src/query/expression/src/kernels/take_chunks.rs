@@ -15,8 +15,8 @@
 use std::sync::Arc;
 
 use binary::BinaryColumnBuilder;
-use databend_common_arrow::arrow::bitmap::Bitmap;
-use databend_common_arrow::arrow::buffer::Buffer;
+use databend_common_column::bitmap::Bitmap;
+use databend_common_column::buffer::Buffer;
 use databend_common_hashtable::RowPtr;
 use itertools::Itertools;
 use string::StringColumnBuilder;
@@ -299,6 +299,10 @@ impl Column {
                 let builder = DateType::create_builder(result_size, &[]);
                 Self::take_block_value_types::<DateType>(columns, builder, indices)
             }
+            Column::Interval(_) => {
+                let builder = IntervalType::create_builder(result_size, &[]);
+                Self::take_block_value_types::<IntervalType>(columns, builder, indices)
+            }
             Column::Array(column) => {
                 let mut offsets = Vec::with_capacity(result_size + 1);
                 offsets.push(0);
@@ -520,6 +524,13 @@ impl Column {
                     .collect_vec();
                 ColumnVec::Timestamp(columns)
             }
+            Column::Interval(_) => {
+                let columns = columns
+                    .iter()
+                    .map(|col| IntervalType::try_downcast_column(col).unwrap())
+                    .collect_vec();
+                ColumnVec::Interval(columns)
+            }
             Column::Date(_) => {
                 let columns = columns
                     .iter()
@@ -683,6 +694,14 @@ impl Column {
                 .unwrap();
                 Column::Date(d)
             }
+            ColumnVec::Interval(columns) => {
+                let builder = Self::take_block_vec_primitive_types(columns, indices);
+                let i =
+                    <IntervalType>::upcast_column(<IntervalType>::column_from_vec(builder, &[]))
+                        .into_interval()
+                        .unwrap();
+                Column::Interval(i)
+            }
             ColumnVec::Array(columns) => {
                 let data_type = data_type.as_array().unwrap();
                 let mut offsets = Vec::with_capacity(result_size + 1);
@@ -811,7 +830,7 @@ impl Column {
         let mut total_len = 0;
         let mut unset_bits = 0;
         for bitmap in col.iter() {
-            unset_bits += bitmap.unset_bits();
+            unset_bits += bitmap.null_count();
             total_len += bitmap.len();
         }
         if unset_bits == total_len || unset_bits == 0 {

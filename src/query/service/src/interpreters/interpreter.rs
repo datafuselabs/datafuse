@@ -27,6 +27,7 @@ use databend_common_base::base::short_sql;
 use databend_common_base::runtime::profile::get_statistics_desc;
 use databend_common_base::runtime::profile::ProfileDesc;
 use databend_common_base::runtime::profile::ProfileStatisticsName;
+use databend_common_base::runtime::GlobalIORuntime;
 use databend_common_catalog::query_kind::QueryKind;
 use databend_common_catalog::table_context::TableContext;
 use databend_common_exception::ErrorCode;
@@ -51,7 +52,6 @@ use md5::Md5;
 
 use super::hook::vacuum_hook::hook_disk_temp_dir;
 use super::hook::vacuum_hook::hook_vacuum_temp_files;
-use super::interpreter_txn_commit::CommitInterpreter;
 use super::InterpreterMetrics;
 use super::InterpreterQueryLog;
 use crate::pipelines::executor::ExecutorSettings;
@@ -100,18 +100,7 @@ pub trait Interpreter: Sync + Send {
 
         ctx.set_status_info("building pipeline");
         ctx.check_aborting().with_context(make_error)?;
-        if self.is_ddl() {
-            CommitInterpreter::try_create(ctx.clone())?
-                .execute2()
-                .await?;
-            ctx.clear_tables_cache();
-        }
-        if !self.is_txn_command() && ctx.txn_mgr().lock().is_fail() {
-            let err = ErrorCode::CurrentTransactionIsAborted(
-                "current transaction is aborted, commands ignored until end of transaction block",
-            );
-            return Err(err);
-        }
+
         let mut build_res = match self.execute2().await {
             Ok(build_res) => build_res,
             Err(err) => {
@@ -242,7 +231,9 @@ async fn plan_sql(
 ) -> Result<(Plan, PlanExtras, AcquireQueueGuard)> {
     let mut planner = Planner::new_with_query_executor(
         ctx.clone(),
-        Arc::new(ServiceQueryExecutor::new(ctx.clone())),
+        Arc::new(ServiceQueryExecutor::new(QueryContext::create_from(
+            ctx.clone(),
+        ))),
     );
 
     // Parse the SQL query, get extract additional information.
@@ -328,6 +319,8 @@ pub fn on_execution_finished(info: &ExecutionInfo, query_ctx: Arc<QueryContext>)
         })?;
     }
 
+    hook_clear_m_cte_temp_table(&query_ctx)?;
+
     hook_vacuum_temp_files(&query_ctx)?;
 
     hook_disk_temp_dir(&query_ctx)?;
@@ -369,4 +362,12 @@ fn need_acquire_lock(ctx: Arc<QueryContext>, stmt: &Statement) -> bool {
         ),
         _ => false,
     }
+}
+
+fn hook_clear_m_cte_temp_table(query_ctx: &Arc<QueryContext>) -> Result<()> {
+    let _ = GlobalIORuntime::instance().block_on(async move {
+        query_ctx.drop_m_cte_temp_table().await?;
+        Ok(())
+    });
+    Ok(())
 }
