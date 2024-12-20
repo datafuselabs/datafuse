@@ -720,7 +720,7 @@ impl FlattenGenerator {
     #[allow(clippy::too_many_arguments)]
     fn flatten(
         &mut self,
-        input: &RawJsonb<&[u8]>,
+        input: &RawJsonb,
         path: &str,
         key_builder: &mut Option<NullableColumnBuilder<StringType>>,
         path_builder: &mut Option<StringColumnBuilder>,
@@ -782,7 +782,7 @@ impl FlattenGenerator {
     #[allow(clippy::too_many_arguments)]
     fn flatten_array(
         &mut self,
-        input: &RawJsonb<&[u8]>,
+        input: &RawJsonb,
         path: &str,
         key_builder: &mut Option<NullableColumnBuilder<StringType>>,
         path_builder: &mut Option<StringColumnBuilder>,
@@ -834,7 +834,7 @@ impl FlattenGenerator {
     #[allow(clippy::too_many_arguments)]
     fn flatten_object(
         &mut self,
-        input: &RawJsonb<&[u8]>,
+        input: &RawJsonb,
         path: &str,
         key_builder: &mut Option<NullableColumnBuilder<StringType>>,
         path_builder: &mut Option<StringColumnBuilder>,
@@ -878,7 +878,7 @@ impl FlattenGenerator {
 
                     if self.recursive {
                         self.flatten(
-                            &RawJsonb(&val),
+                            &val.as_raw(),
                             &inner_path,
                             key_builder,
                             path_builder,

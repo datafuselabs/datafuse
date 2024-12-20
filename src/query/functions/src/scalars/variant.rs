@@ -2303,12 +2303,12 @@ fn json_object_insert_fn(
             Value::Scalar(scalar) => scalar.as_ref(),
             Value::Column(col) => unsafe { col.index_unchecked(idx) },
         };
-        if val == ScalarRef::Null {
+        if value == ScalarRef::Null {
             builder.commit_row();
             validity.push(false);
             continue;
         }
-        let v = val.as_variant().unwrap();
+        let v = value.as_variant().unwrap();
         let value = RawJsonb(v);
         if !value.is_object().unwrap_or_default() {
             ctx.set_error(builder.len(), "Invalid json object");
@@ -2408,12 +2408,12 @@ fn json_object_pick_or_delete_fn(
             Value::Scalar(scalar) => scalar.as_ref(),
             Value::Column(col) => unsafe { col.index_unchecked(idx) },
         };
-        if val == ScalarRef::Null {
+        if value == ScalarRef::Null {
             builder.commit_row();
             validity.push(false);
             continue;
         }
-        let v = val.as_variant().unwrap();
+        let v = value.as_variant().unwrap();
         let value = RawJsonb(v);
         if !value.is_object().unwrap_or_default() {
             ctx.set_error(builder.len(), "Invalid json object");
