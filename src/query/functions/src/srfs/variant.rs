@@ -652,7 +652,7 @@ pub(crate) fn unnest_variant_array(
             max_nums_per_row[row] = std::cmp::max(max_nums_per_row[row], len);
 
             for val in vals {
-                builder.put_slice(&val);
+                builder.put_slice(val.as_ref());
                 builder.commit_row();
             }
 
@@ -669,16 +669,16 @@ fn unnest_variant_obj(
     max_nums_per_row: &mut [usize],
 ) -> (Value<AnyType>, usize) {
     match RawJsonb(val).object_each() {
-        Ok(Some(vals)) if !vals.is_empty() => {
-            let len = vals.len();
+        Ok(Some(key_vals)) if !key_vals.is_empty() => {
+            let len = key_vals.len();
             let mut val_builder = BinaryColumnBuilder::with_capacity(0, 0);
             let mut key_builder = StringColumnBuilder::with_capacity(0);
 
             max_nums_per_row[row] = std::cmp::max(max_nums_per_row[row], len);
 
-            for (key, val) in vals {
-                key_builder.put_and_commit(String::from_utf8_lossy(&key));
-                val_builder.put_slice(&val);
+            for (key, val) in key_vals {
+                key_builder.put_and_commit(&key);
+                val_builder.put_slice(val.as_ref());
                 val_builder.commit_row();
             }
 
@@ -806,18 +806,18 @@ impl FlattenGenerator {
                     index_builder.push(i.try_into().unwrap());
                 }
                 if let Some(value_builder) = value_builder {
-                    value_builder.put_slice(&val);
+                    value_builder.put_slice(val.as_ref());
                     value_builder.commit_row();
                 }
                 if let Some(this_builder) = this_builder {
-                    this_builder.put_slice(input.0);
+                    this_builder.put_slice(input.as_ref());
                     this_builder.commit_row();
                 }
                 *rows += 1;
 
                 if self.recursive {
                     self.flatten(
-                        &RawJsonb(&val),
+                        &val.as_raw(),
                         &inner_path,
                         key_builder,
                         path_builder,
@@ -843,12 +843,12 @@ impl FlattenGenerator {
         this_builder: &mut Option<BinaryColumnBuilder>,
         rows: &mut usize,
     ) {
-        if let Ok(Some(obj_keys)) = input.object_keys() {
-            let obj_keys = RawJsonb(obj_keys);
+        if let Ok(Some(owned_obj_keys)) = input.object_keys() {
+            let obj_keys = owned_obj_keys.as_raw();
             if let Ok(Some(len)) = obj_keys.array_length() {
                 for i in 0..len {
-                    let key = obj_keys.get_by_index(i).unwrap().unwrap();
-                    let key = RawJsonb(key);
+                    let owned_key = obj_keys.get_by_index(i).unwrap().unwrap();
+                    let key = owned_key.as_raw();
                     let name = key.as_str().unwrap().unwrap();
                     let val = input.get_by_name(&name, false).unwrap().unwrap();
                     let inner_path = if !path.is_empty() {
@@ -867,11 +867,11 @@ impl FlattenGenerator {
                         index_builder.push_null();
                     }
                     if let Some(value_builder) = value_builder {
-                        value_builder.put_slice(&val);
+                        value_builder.put_slice(val.as_ref());
                         value_builder.commit_row();
                     }
                     if let Some(this_builder) = this_builder {
-                        this_builder.put_slice(input.0);
+                        this_builder.put_slice(input.as_ref());
                         this_builder.commit_row();
                     }
                     *rows += 1;
