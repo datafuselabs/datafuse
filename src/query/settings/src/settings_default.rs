@@ -870,6 +870,13 @@ impl DefaultSettings {
                     scope: SettingScope::Both,
                     range: Some(SettingRange::Numeric(1..=u64::MAX)),
                 }),
+                ("external_server_request_max_threads", DefaultSettingValue {
+                    value: UserSettingValue::UInt64(256),
+                    desc: "Request maximum number of threads to external server",
+                    mode: SettingMode::Both,
+                    scope: SettingScope::Both,
+                    range: Some(SettingRange::Numeric(1..=u64::MAX)),
+                }),
                 ("external_server_request_retry_times", DefaultSettingValue {
                     value: UserSettingValue::UInt64(8),
                     desc: "Request max retry times to external server",
@@ -1136,6 +1143,13 @@ impl DefaultSettings {
                     mode: SettingMode::Both,
                     scope: SettingScope::Global,
                     range: None,
+                }),
+                ("stream_consume_batch_size_hint", DefaultSettingValue {
+                    value: UserSettingValue::UInt64(0),
+                    desc: "Hint for batch size during stream consumption. Set it to 0 to disable it. Larger values may improve throughput but could impose greater pressure on stream consumers.",
+                    mode: SettingMode::Both,
+                    scope: SettingScope::Both,
+                    range: Some(SettingRange::Numeric(0..=u64::MAX)),
                 }),
             ]);
 
