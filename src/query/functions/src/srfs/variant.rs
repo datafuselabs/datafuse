@@ -51,6 +51,7 @@ use jaq_std;
 use jsonb::jsonpath::parse_json_path;
 use jsonb::jsonpath::Mode as SelectorMode;
 use jsonb::jsonpath::Selector;
+use jsonb::OwnedJsonb;
 use jsonb::RawJsonb;
 
 pub fn register(registry: &mut FunctionRegistry) {
@@ -617,10 +618,11 @@ fn jaq_val_to_jsonb(val: &Val) -> Result<Vec<u8>> {
                 .iter()
                 .map(jaq_val_to_jsonb)
                 .collect::<Result<Vec<_>>>()?;
-            return match jsonb::build_array(items.iter().map(|v| &v[..]), &mut buf) {
-                Ok(_) => Ok(buf),
-                Err(_) => Err(ErrorCode::BadBytes("failed to build jsonb array")),
-            };
+            let owned_jsonb = OwnedJsonb::build_array(items.iter().map(|v| RawJsonb::new(v)))
+                .map_err(|e| {
+                    ErrorCode::Internal(format!("failed to build array error: {:?}", e))
+                })?;
+            return Ok(owned_jsonb.0.clone());
         }
         Val::Obj(obj) => {
             let mut kvs = BTreeMap::new();
@@ -629,10 +631,12 @@ fn jaq_val_to_jsonb(val: &Val) -> Result<Vec<u8>> {
                 let val = jaq_val_to_jsonb(v)?;
                 kvs.insert(key, val);
             }
-            return match jsonb::build_object(kvs.iter().map(|(k, v)| (k, &v[..])), &mut buf) {
-                Ok(_) => Ok(buf),
-                Err(_) => Err(ErrorCode::BadBytes("failed to build jsonb object")),
-            };
+            let owned_jsonb =
+                OwnedJsonb::build_object(kvs.iter().map(|(k, v)| (k, RawJsonb::new(&v[..]))))
+                    .map_err(|e| {
+                        ErrorCode::Internal(format!("failed to build object error: {:?}", e))
+                    })?;
+            return Ok(owned_jsonb.0.clone());
         }
     };
     jsonb_value.write_to_vec(&mut buf);

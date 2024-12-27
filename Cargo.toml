@@ -624,7 +624,8 @@ deltalake = { git = "https://github.com/delta-io/delta-rs", rev = "3038c145" }
 ethnum = { git = "https://github.com/datafuse-extras/ethnum-rs", rev = "4cb05f1" }
 #jsonb = { git = "https://github.com/b41sh/jsonb", rev = "4873578c1e0e60d126d55133142650e94711fd21" }
 #jsonb = { git = "https://github.com/b41sh/jsonb", rev = "7ba454e7f6cc93b61c6d065468e3480998c88888" }
-jsonb = { git = "https://github.com/b41sh/jsonb", rev = "2caabfd71e91181a495280a8cbd017b3bcc328c1" }
+#jsonb = { git = "https://github.com/b41sh/jsonb", rev = "2caabfd71e91181a495280a8cbd017b3bcc328c1" }
+jsonb = { git = "https://github.com/b41sh/jsonb", rev = "92af2d8dac65a4b30373b619821d5bd9291b16fc" }
 openai_api_rust = { git = "https://github.com/datafuse-extras/openai-api", rev = "819a0ed" }
 openraft = { git = "https://github.com/databendlabs/openraft", tag = "v0.10.0-alpha.7" }
 orc-rust = { git = "https://github.com/datafusion-contrib/orc-rust", rev = "dfb1ede" }

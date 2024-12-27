@@ -63,8 +63,6 @@ use databend_common_expression::ScalarRef;
 use databend_common_expression::Value;
 use jiff::civil::date;
 use jiff::Unit;
-use jsonb::build_array;
-use jsonb::build_object;
 use jsonb::jsonpath::parse_json_path;
 use jsonb::keypath::parse_key_paths;
 use jsonb::parse_value;

@@ -87,42 +87,54 @@ fn register_variant_cmp(registry: &mut FunctionRegistry) {
         "eq",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
-            jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") == Ordering::Equal
+            let left_jsonb = RawJsonb::new(lhs);
+            let right_jsonb = RawJsonb::new(rhs);
+            left_jsonb.cmp(&right_jsonb) == Ordering::Equal
         },
     );
     registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "noteq",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
-            jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") != Ordering::Equal
+            let left_jsonb = RawJsonb::new(lhs);
+            let right_jsonb = RawJsonb::new(rhs);
+            left_jsonb.cmp(&right_jsonb) != Ordering::Equal
         },
     );
     registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "gt",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
-            jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") == Ordering::Greater
+            let left_jsonb = RawJsonb::new(lhs);
+            let right_jsonb = RawJsonb::new(rhs);
+            left_jsonb.cmp(&right_jsonb) == Ordering::Greater
         },
     );
     registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "gte",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
-            jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") != Ordering::Less
+            let left_jsonb = RawJsonb::new(lhs);
+            let right_jsonb = RawJsonb::new(rhs);
+            left_jsonb.cmp(&right_jsonb) != Ordering::Less
         },
     );
     registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "lt",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
-            jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") == Ordering::Less
+            let left_jsonb = RawJsonb::new(lhs);
+            let right_jsonb = RawJsonb::new(rhs);
+            left_jsonb.cmp(&right_jsonb) == Ordering::Less
         },
     );
     registry.register_comparison_2_arg::<VariantType, VariantType, _, _>(
         "lte",
         |_, _, _| FunctionDomain::Full,
         |lhs, rhs, _| {
-            jsonb::compare(lhs, rhs).expect("unable to parse jsonb value") != Ordering::Greater
+            let left_jsonb = RawJsonb::new(lhs);
+            let right_jsonb = RawJsonb::new(rhs);
+            left_jsonb.cmp(&right_jsonb) != Ordering::Greater
         },
     );
 }
