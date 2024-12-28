@@ -82,7 +82,7 @@ impl FieldEncoderJSON {
 
             Column::Variant(c) => {
                 let v = unsafe { c.index_unchecked(row_index) };
-                out_buf.extend_from_slice(RawJsonb(v).to_string().as_bytes());
+                out_buf.extend_from_slice(RawJsonb::new(v).to_string().as_bytes());
             }
             Column::Geometry(c) => {
                 let v = unsafe { c.index_unchecked(row_index) };

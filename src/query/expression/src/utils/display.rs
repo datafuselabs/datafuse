@@ -263,7 +263,7 @@ impl Display for ScalarRef<'_> {
                 write!(f, ")")
             }
             ScalarRef::Variant(s) => {
-                let raw_jsonb = RawJsonb(s);
+                let raw_jsonb = RawJsonb::new(s);
                 let value = raw_jsonb.to_string();
                 write!(f, "'{value}'")
             }

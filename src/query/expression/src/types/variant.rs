@@ -239,7 +239,7 @@ pub fn cast_scalar_to_variant(scalar: ScalarRef, tz: &TimeZone, buf: &mut Vec<u8
         ScalarRef::Interval(i) => interval_to_string(&i).to_string().into(),
         ScalarRef::Array(col) => {
             let items = cast_scalars_to_variants(col.iter(), tz);
-            let owned_jsonb = OwnedJsonb::build_array(items.iter().map(|v| RawJsonb::new(v)))
+            let owned_jsonb = OwnedJsonb::build_array(items.iter().map(RawJsonb::new))
                 .expect("failed to build jsonb array");
             buf.extend_from_slice(owned_jsonb.as_ref());
             return;

@@ -93,7 +93,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                         let val = unsafe { val_arg.index_unchecked(row) };
                                         let mut builder = BinaryColumnBuilder::with_capacity(0, 0);
                                         if let ScalarRef::Variant(val) = val {
-                                            match RawJsonb(val)
+                                            match RawJsonb::new(val)
                                                 .get_by_path(&json_path, SelectorMode::All)
                                             {
                                                 Ok(owned_jsonbs) => {
@@ -102,7 +102,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                                         builder.commit_row();
                                                     }
                                                 }
-                                                Err(err) => {
+                                                Err(_err) => {
                                                     ctx.set_error(
                                                         0,
                                                         format!(
@@ -141,7 +141,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                     match parse_json_path(path.as_bytes()) {
                                         Ok(json_path) => {
                                             if let ScalarRef::Variant(val) = val {
-                                                match RawJsonb(val)
+                                                match RawJsonb::new(val)
                                                     .get_by_path(&json_path, SelectorMode::All)
                                                 {
                                                     Ok(owned_jsonbs) => {
@@ -150,7 +150,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                                             builder.commit_row();
                                                         }
                                                     }
-                                                    Err(err) => {
+                                                    Err(_err) => {
                                                         ctx.set_error(
                                                             0,
                                                             format!(
@@ -430,8 +430,8 @@ pub fn register(registry: &mut FunctionRegistry) {
                                     Some((path, ref json_path)) => {
                                         // get inner input values by path
                                         let mut builder = BinaryColumnBuilder::with_capacity(0, 0);
-                                        match RawJsonb(val)
-                                            .get_by_path(&json_path, SelectorMode::First)
+                                        match RawJsonb::new(val)
+                                            .get_by_path(json_path, SelectorMode::First)
                                         {
                                             Ok(owned_jsonbs) => {
                                                 for owned_jsonb in owned_jsonbs {
@@ -439,7 +439,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                                     builder.commit_row();
                                                 }
                                             }
-                                            Err(err) => {
+                                            Err(_err) => {
                                                 ctx.set_error(
                                                     0,
                                                     format!(
@@ -549,7 +549,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                     return null_result;
                                 }
                                 Some(ScalarRef::Variant(v)) => {
-                                    let s = RawJsonb(v).to_serde_json();
+                                    let s = RawJsonb::new(v).to_serde_json();
                                     match s {
                                         Err(e) => {
                                             ctx.set_error(row, e.to_string());
@@ -626,7 +626,7 @@ fn jaq_val_to_jsonb(val: &Val) -> Result<Vec<u8>> {
                 .map_err(|e| {
                     ErrorCode::Internal(format!("failed to build array error: {:?}", e))
                 })?;
-            return Ok(owned_jsonb.0.clone());
+            return Ok(owned_jsonb.to_vec());
         }
         Val::Obj(obj) => {
             let mut kvs = BTreeMap::new();
@@ -640,7 +640,7 @@ fn jaq_val_to_jsonb(val: &Val) -> Result<Vec<u8>> {
                     .map_err(|e| {
                         ErrorCode::Internal(format!("failed to build object error: {:?}", e))
                     })?;
-            return Ok(owned_jsonb.0.clone());
+            return Ok(owned_jsonb.to_vec());
         }
     };
     jsonb_value.write_to_vec(&mut buf);
@@ -652,7 +652,7 @@ pub(crate) fn unnest_variant_array(
     row: usize,
     max_nums_per_row: &mut [usize],
 ) -> (Value<AnyType>, usize) {
-    match RawJsonb(val).array_values() {
+    match RawJsonb::new(val).array_values() {
         Ok(Some(vals)) if !vals.is_empty() => {
             let len = vals.len();
             let mut builder = BinaryColumnBuilder::with_capacity(0, 0);
@@ -676,7 +676,7 @@ fn unnest_variant_obj(
     row: usize,
     max_nums_per_row: &mut [usize],
 ) -> (Value<AnyType>, usize) {
-    match RawJsonb(val).object_each() {
+    match RawJsonb::new(val).object_each() {
         Ok(Some(key_vals)) if !key_vals.is_empty() => {
             let len = key_vals.len();
             let mut val_builder = BinaryColumnBuilder::with_capacity(0, 0);
@@ -932,7 +932,7 @@ impl FlattenGenerator {
 
         if !input.is_empty() {
             self.flatten(
-                &RawJsonb(input),
+                &RawJsonb::new(input),
                 path,
                 &mut key_builder,
                 &mut path_builder,

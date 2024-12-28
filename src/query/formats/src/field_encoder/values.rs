@@ -323,7 +323,7 @@ impl FieldEncoderValues {
         in_nested: bool,
     ) {
         let v = unsafe { column.index_unchecked(row_index) };
-        let s = RawJsonb(v).to_string();
+        let s = RawJsonb::new(v).to_string();
         self.write_string_inner(s.as_bytes(), out_buf, in_nested);
     }
 

@@ -240,7 +240,7 @@ impl BloomIndex {
                         );
                         for val in column.iter() {
                             if let ScalarRef::Variant(v) = val {
-                                let raw_jsonb = RawJsonb(v);
+                                let raw_jsonb = RawJsonb::new(v);
                                 if let Ok(str_val) = raw_jsonb.to_str() {
                                     builder.push(ScalarRef::String(str_val.as_str()));
                                     continue;

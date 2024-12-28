@@ -96,7 +96,7 @@ fn transform_scalar(scalar: ScalarRef<'_>, decode: bool) -> Result<Scalar> {
         }
         ScalarRef::Variant(data) => {
             if decode {
-                let raw_jsonb = RawJsonb(data);
+                let raw_jsonb = RawJsonb::new(data);
                 Scalar::Variant(raw_jsonb.to_string().into_bytes())
             } else {
                 let value = parse_value(data).map_err(|err| {

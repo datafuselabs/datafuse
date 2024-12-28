@@ -1718,7 +1718,7 @@ fn st_transform_impl(
 /// EWKB (extended well-known binary) in hexadecimal format (without a leading 0x).
 /// GEOJSON
 fn json_to_geometry_impl(binary: &[u8], srid: Option<i32>) -> Result<Vec<u8>> {
-    let raw_jsonb = RawJsonb(binary);
+    let raw_jsonb = RawJsonb::new(binary);
     let s = raw_jsonb.to_string();
     let json = GeoJson(s.as_str());
     match json.to_ewkb(CoordDimensions::xy(), srid) {

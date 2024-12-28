@@ -533,7 +533,7 @@ fn register_like(registry: &mut FunctionRegistry) {
             | LikePattern::StartOfPercent(_)
             | LikePattern::EndOfPercent(_)
             | LikePattern::Constant(_) => {
-                let raw_jsonb = RawJsonb(val);
+                let raw_jsonb = RawJsonb::new(val);
                 match raw_jsonb.as_str() {
                     Ok(Some(s)) => pattern_type.compare(s.as_bytes()),
                     Ok(None) => false,
@@ -544,7 +544,7 @@ fn register_like(registry: &mut FunctionRegistry) {
                 }
             }
             _ => {
-                let raw_jsonb = RawJsonb(val);
+                let raw_jsonb = RawJsonb::new(val);
                 match raw_jsonb.traverse_check_string(|v| pattern_type.compare(v)) {
                     Ok(res) => res,
                     Err(_) => {
