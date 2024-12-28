@@ -50,7 +50,6 @@ use jaq_parse;
 use jaq_std;
 use jsonb::jsonpath::parse_json_path;
 use jsonb::jsonpath::Mode as SelectorMode;
-use jsonb::jsonpath::Selector;
 use jsonb::OwnedJsonb;
 use jsonb::RawJsonb;
 
@@ -88,29 +87,31 @@ pub fn register(registry: &mut FunctionRegistry) {
                         Value::Scalar(Scalar::String(path)) => {
                             match parse_json_path(path.as_bytes()) {
                                 Ok(json_path) => {
-                                    let selector = Selector::new(json_path, SelectorMode::All);
                                     for (row, max_nums_per_row) in
                                         max_nums_per_row.iter_mut().enumerate().take(ctx.num_rows)
                                     {
                                         let val = unsafe { val_arg.index_unchecked(row) };
                                         let mut builder = BinaryColumnBuilder::with_capacity(0, 0);
                                         if let ScalarRef::Variant(val) = val {
-                                            if selector
-                                                .select(
-                                                    &RawJsonb(val),
-                                                    &mut builder.data,
-                                                    &mut builder.offsets,
-                                                )
-                                                .is_err()
+                                            match RawJsonb(val)
+                                                .get_by_path(&json_path, SelectorMode::All)
                                             {
-                                                ctx.set_error(
-                                                    0,
-                                                    format!(
-                                                        "Invalid JSONB value '0x{}'",
-                                                        hex::encode(val)
-                                                    ),
-                                                );
-                                                break;
+                                                Ok(owned_jsonbs) => {
+                                                    for owned_jsonb in owned_jsonbs {
+                                                        builder.put_slice(owned_jsonb.as_ref());
+                                                        builder.commit_row();
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    ctx.set_error(
+                                                        0,
+                                                        format!(
+                                                            "Invalid JSONB value '0x{}'",
+                                                            hex::encode(val)
+                                                        ),
+                                                    );
+                                                    break;
+                                                }
                                             }
                                         }
                                         let array =
@@ -125,7 +126,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                                     }
                                 }
                                 Err(_) => {
-                                    ctx.set_error(0, format!("Invalid JSON Path '{}'", &path,));
+                                    ctx.set_error(0, format!("Invalid JSON Path '{}'", &path));
                                 }
                             }
                         }
@@ -140,24 +141,25 @@ pub fn register(registry: &mut FunctionRegistry) {
                                     match parse_json_path(path.as_bytes()) {
                                         Ok(json_path) => {
                                             if let ScalarRef::Variant(val) = val {
-                                                let selector =
-                                                    Selector::new(json_path, SelectorMode::All);
-                                                if selector
-                                                    .select(
-                                                        &RawJsonb(val),
-                                                        &mut builder.data,
-                                                        &mut builder.offsets,
-                                                    )
-                                                    .is_err()
+                                                match RawJsonb(val)
+                                                    .get_by_path(&json_path, SelectorMode::All)
                                                 {
-                                                    ctx.set_error(
-                                                        0,
-                                                        format!(
-                                                            "Invalid JSONB value '0x{}'",
-                                                            hex::encode(val)
-                                                        ),
-                                                    );
-                                                    break;
+                                                    Ok(owned_jsonbs) => {
+                                                        for owned_jsonb in owned_jsonbs {
+                                                            builder.put_slice(owned_jsonb.as_ref());
+                                                            builder.commit_row();
+                                                        }
+                                                    }
+                                                    Err(err) => {
+                                                        ctx.set_error(
+                                                            0,
+                                                            format!(
+                                                                "Invalid JSONB value '0x{}'",
+                                                                hex::encode(val)
+                                                            ),
+                                                        );
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
@@ -325,8 +327,7 @@ pub fn register(registry: &mut FunctionRegistry) {
                             Value::Scalar(Scalar::String(v)) => {
                                 match parse_json_path(v.as_bytes()) {
                                     Ok(jsonpath) => {
-                                        let selector = Selector::new(jsonpath, SelectorMode::First);
-                                        json_path = Some((v, selector));
+                                        json_path = Some((v, jsonpath));
                                     }
                                     Err(_) => {
                                         ctx.set_error(0, format!("Invalid JSON Path {v:?}",));
@@ -426,25 +427,28 @@ pub fn register(registry: &mut FunctionRegistry) {
                             }
                             ScalarRef::Variant(val) => {
                                 let columns = match json_path {
-                                    Some((path, ref selector)) => {
+                                    Some((path, ref json_path)) => {
                                         // get inner input values by path
                                         let mut builder = BinaryColumnBuilder::with_capacity(0, 0);
-                                        if selector
-                                            .select(
-                                                &RawJsonb(val),
-                                                &mut builder.data,
-                                                &mut builder.offsets,
-                                            )
-                                            .is_err()
+                                        match RawJsonb(val)
+                                            .get_by_path(&json_path, SelectorMode::First)
                                         {
-                                            ctx.set_error(
-                                                0,
-                                                format!(
-                                                    "Invalid JSONB value '0x{}'",
-                                                    hex::encode(val)
-                                                ),
-                                            );
-                                            break;
+                                            Ok(owned_jsonbs) => {
+                                                for owned_jsonb in owned_jsonbs {
+                                                    builder.put_slice(owned_jsonb.as_ref());
+                                                    builder.commit_row();
+                                                }
+                                            }
+                                            Err(err) => {
+                                                ctx.set_error(
+                                                    0,
+                                                    format!(
+                                                        "Invalid JSONB value '0x{}'",
+                                                        hex::encode(val)
+                                                    ),
+                                                );
+                                                break;
+                                            }
                                         }
                                         let inner_val = builder.pop().unwrap_or_default();
                                         generator.generate(
