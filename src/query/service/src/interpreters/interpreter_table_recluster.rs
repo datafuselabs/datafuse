@@ -27,6 +27,8 @@ use databend_common_sql::MetadataRef;
 use log::error;
 use log::warn;
 
+use crate::interpreters::hook::vacuum_hook::hook_disk_temp_dir;
+use crate::interpreters::hook::vacuum_hook::hook_vacuum_temp_files;
 use crate::interpreters::Interpreter;
 use crate::interpreters::InterpreterClusteringHistory;
 use crate::pipelines::executor::ExecutorSettings;
@@ -183,6 +185,10 @@ impl ReclusterTableInterpreter {
         drop(complete_executor);
         // make sure the lock guard is dropped before the next loop.
         drop(lock_guard);
+
+        // vacuum temp files.
+        hook_vacuum_temp_files(&self.ctx)?;
+        hook_disk_temp_dir(&self.ctx)?;
 
         InterpreterClusteringHistory::write_log(&self.ctx, start, &plan.database, &plan.table)?;
         Ok(false)

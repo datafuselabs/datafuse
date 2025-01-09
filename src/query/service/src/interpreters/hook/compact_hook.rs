@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use databend_common_base::runtime::GlobalIORuntime;
+use databend_common_base::runtime::GLOBAL_MEM_STAT;
 use databend_common_catalog::lock::LockTableOption;
 use databend_common_catalog::table::CompactionLimits;
 use databend_common_catalog::table_context::TableContext;
@@ -195,6 +196,13 @@ async fn compact_table(
     {
         // do recluster.
         if table.cluster_key_meta().is_some() {
+            let avail_memory_usage =
+                settings.get_max_memory_usage()? - GLOBAL_MEM_STAT.get_memory_usage().max(0) as u64;
+            let recluster_block_size = settings
+                .get_recluster_block_size()?
+                .min(avail_memory_usage * 30 / 100);
+            settings.set_recluster_block_size(recluster_block_size)?;
+            ctx.set_enable_sort_spill(false);
             let recluster = RelOperator::Recluster(Recluster {
                 catalog: compact_target.catalog,
                 database: compact_target.database,
