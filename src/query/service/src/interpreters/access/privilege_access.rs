@@ -60,7 +60,7 @@ enum ObjectId {
 }
 
 // table functions that need `Super` privilege
-const SYSTEM_TABLE_FUNCTIONS: [&str; 1] = ["fuse_amend"];
+const SYSTEM_TABLE_FUNCTIONS: [&str; 2] = ["fuse_amend", "set_cache_capacity"];
 
 impl PrivilegeAccess {
     pub fn create(ctx: Arc<QueryContext>) -> Box<dyn AccessChecker> {
@@ -1255,6 +1255,20 @@ impl AccessChecker for PrivilegeAccess {
             }
             Plan::Commit => {}
             Plan::Abort => {}
+            Plan::ShowWarehouses => {}
+            Plan::ShowOnlineNodes => {}
+            Plan::DropWarehouse(_) => {}
+            Plan::ResumeWarehouse(_) => {}
+            Plan::SuspendWarehouse(_) => {}
+            Plan::RenameWarehouse(_) => {}
+            Plan::InspectWarehouse(_) => {}
+            Plan::DropWarehouseCluster(_) => {}
+            Plan::RenameWarehouseCluster(_) => {}
+            Plan::UseWarehouse(_) => {}
+            Plan::CreateWarehouse(_) => {}
+            Plan::AddWarehouseCluster(_) => {}
+            Plan::AssignWarehouseNodes(_) => {}
+            Plan::UnassignWarehouseNodes(_) => {}
         }
 
         Ok(())
