@@ -17,8 +17,8 @@ use databend_common_expression::types::DataType;
 use databend_common_expression::types::NumberDataType;
 use databend_common_expression::Scalar;
 
-use super::aggregate_null_variadic_adaptor::AggregateNullVariadicAdaptor;
-use super::AggregateNullUnaryAdaptor;
+use super::aggregate_null_unary_variadic_adaptor::AggregateNullUnaryAdaptor;
+use super::aggregate_null_unary_variadic_adaptor::AggregateNullVariadicAdaptor;
 use crate::aggregates::aggregate_function_factory::AggregateFunctionFeatures;
 use crate::aggregates::aggregate_null_result::AggregateNullResultFunction;
 use crate::aggregates::AggregateFunctionRef;
@@ -55,7 +55,7 @@ impl AggregateFunctionCombinatorNull {
         properties: AggregateFunctionFeatures,
     ) -> Result<AggregateFunctionRef> {
         // has_null_types
-        if !arguments.is_empty() && arguments.iter().any(|f| f == &DataType::Null) {
+        if arguments.iter().any(|f| f == &DataType::Null) {
             if properties.returns_default_when_only_null {
                 return AggregateNullResultFunction::try_create(DataType::Number(
                     NumberDataType::UInt64,

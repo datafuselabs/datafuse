@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::alloc::Layout;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
@@ -23,10 +22,11 @@ use strength_reduce::StrengthReducedU64;
 
 use super::payload_row::rowformat_size;
 use super::payload_row::serialize_column_to_rowformat;
-use crate::get_layout_offsets;
+use crate::get_states_layout;
 use crate::read;
 use crate::store;
 use crate::types::DataType;
+use crate::AggrState;
 use crate::AggregateFunctionRef;
 use crate::Column;
 use crate::ColumnBuilder;
@@ -35,6 +35,7 @@ use crate::InputColumns;
 use crate::PayloadFlushState;
 use crate::SelectVector;
 use crate::StateAddr;
+use crate::StatesLayout;
 use crate::BATCH_SIZE;
 use crate::MAX_PAGE_SIZE;
 
@@ -65,8 +66,7 @@ pub struct Payload {
     pub validity_offsets: Vec<usize>,
     pub hash_offset: usize,
     pub state_offset: usize,
-    pub state_addr_offsets: Vec<usize>,
-    pub state_layout: Option<Layout>,
+    pub states_layout: Option<StatesLayout>,
 
     // if set, the payload contains at least duplicate rows
     pub min_cardinality: Option<usize>,
@@ -84,16 +84,14 @@ pub struct Page {
 
 pub type Pages = Vec<Page>;
 
-// TODO FIXME
 impl Payload {
     pub fn new(
         arena: Arc<Bump>,
         group_types: Vec<DataType>,
         aggrs: Vec<AggregateFunctionRef>,
     ) -> Self {
-        let mut state_addr_offsets = Vec::new();
-        let state_layout = if !aggrs.is_empty() {
-            Some(get_layout_offsets(&aggrs, &mut state_addr_offsets).unwrap())
+        let states_layout = if !aggrs.is_empty() {
+            Some(get_states_layout(&aggrs).unwrap())
         } else {
             None
         };
@@ -147,8 +145,7 @@ impl Payload {
             validity_offsets,
             hash_offset,
             state_offset,
-            state_addr_offsets,
-            state_layout,
+            states_layout,
         }
     }
 
@@ -290,18 +287,20 @@ impl Payload {
 
         write_offset += 8;
         debug_assert!(write_offset == self.state_offset);
-        if let Some(layout) = self.state_layout {
+        if let Some(layout) = &self.states_layout {
             // write states
             for idx in select_vector.iter().take(new_group_rows).copied() {
-                let place = self.arena.alloc_layout(layout);
+                let place = self.arena.alloc_layout(layout.layout);
                 unsafe {
                     let dst = address[idx].add(write_offset);
                     store::<u64>(&(place.as_ptr() as u64), dst as *mut u8);
                 }
 
                 let place = StateAddr::from(place);
-                for (aggr, offset) in self.aggrs.iter().zip(self.state_addr_offsets.iter()) {
-                    aggr.init_state(place.next(*offset));
+                for (aggr, loc) in self.aggrs.iter().zip(layout.states_loc.iter()) {
+                    {
+                        aggr.init_state(&AggrState::new(place, loc));
+                    }
                 }
                 self.pages[page_index[idx]].state_rows += 1;
             }
@@ -420,19 +419,25 @@ impl Drop for Payload {
     fn drop(&mut self) {
         drop_guard(move || {
             // drop states
-            if !self.state_move_out {
-                for (aggr, addr_offset) in self.aggrs.iter().zip(self.state_addr_offsets.iter()) {
-                    if aggr.need_manual_drop_state() {
-                        for page in self.pages.iter() {
-                            for row in 0..page.state_rows {
-                                let ptr = self.data_ptr(page, row);
-                                unsafe {
-                                    let state_addr =
-                                        read::<u64>(ptr.add(self.state_offset) as _) as usize;
-                                    let state_place = StateAddr::new(state_addr);
-                                    aggr.drop_state(state_place.next(*addr_offset));
-                                }
-                            }
+            if self.state_move_out {
+                return;
+            }
+
+            let Some(states_layout) = self.states_layout.as_ref() else {
+                return;
+            };
+
+            for (aggr, loc) in self.aggrs.iter().zip(states_layout.states_loc.iter()) {
+                if !aggr.need_manual_drop_state() {
+                    continue;
+                }
+
+                for page in self.pages.iter() {
+                    for row in 0..page.state_rows {
+                        let ptr = self.data_ptr(page, row);
+                        unsafe {
+                            let state_addr = read::<u64>(ptr.add(self.state_offset) as _) as usize;
+                            aggr.drop_state(&AggrState::new(StateAddr::new(state_addr), loc));
                         }
                     }
                 }
