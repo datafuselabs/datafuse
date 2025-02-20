@@ -576,7 +576,7 @@ impl ExplainInterpreter {
             let mut dummy_pipeline = Pipeline::create();
             let (prune_pipeline, send_state) = fuse_table.do_build_prune_pipeline(
                 self.ctx.clone(),
-                &source,
+                source,
                 &mut dummy_pipeline,
                 true,
             )?;
@@ -591,6 +591,6 @@ impl ExplainInterpreter {
                 return Ok(Some(statistics));
             }
         }
-        return Ok(None);
+        Ok(None)
     }
 }

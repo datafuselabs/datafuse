@@ -136,7 +136,7 @@ pub struct FuseTable {
     pub(crate) bloom_index_cols: BloomIndexColumns,
 
     pub(crate) operator: Operator,
-    pub(crate) data_metrics: Arc<StorageMetrics>,
+    pub data_metrics: Arc<StorageMetrics>,
 
     table_type: FuseTableType,
 
