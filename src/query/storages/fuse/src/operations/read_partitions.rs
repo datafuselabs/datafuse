@@ -197,15 +197,16 @@ impl FuseTable {
         ));
 
         if ctx.get_settings().get_enable_prune_cache()? {
-        if let Some((stat, part)) = Self::check_prune_cache(&derterministic_cache_key) {
-            send_part_state.set_pruning_stats(stat);
-            let sender = part_info_tx.clone();
-            info!("prune pipeline: get prune result from cache");
-            source_pipeline.set_on_init(move || {
-                // We cannot use the runtime associated with the query to avoid increasing its lifetime.
-                GlobalIORuntime::instance().spawn(async move {
-                    // avoid block global io runtime
-                    let runtime = Runtime::with_worker_threads(2, Some("send-parts".to_string()))?;
+            if let Some((stat, part)) = Self::check_prune_cache(&derterministic_cache_key) {
+                send_part_state.set_pruning_stats(stat);
+                let sender = part_info_tx.clone();
+                info!("prune pipeline: get prune result from cache");
+                source_pipeline.set_on_init(move || {
+                    // We cannot use the runtime associated with the query to avoid increasing its lifetime.
+                    GlobalIORuntime::instance().spawn(async move {
+                        // avoid block global io runtime
+                        let runtime =
+                            Runtime::with_worker_threads(2, Some("send-parts".to_string()))?;
 
                         let join_handler = runtime.spawn(async move {
                             for part in part.partitions {
@@ -424,7 +425,7 @@ impl FuseTable {
                 pruner.table_schema.clone(),
                 send_part_state.clone(),
                 dry_run,
-                enable_prune_cache
+                enable_prune_cache,
             )
         })?;
 

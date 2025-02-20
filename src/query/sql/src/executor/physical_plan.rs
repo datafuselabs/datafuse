@@ -663,6 +663,7 @@ impl PhysicalPlan {
             | PhysicalPlan::ReplaceAsyncSourcer(_)
             | PhysicalPlan::Recluster(_)
             | PhysicalPlan::RecursiveCteScan(_) => Box::new(std::iter::empty()),
+            PhysicalPlan::HilbertSerialize(plan) => Box::new(std::iter::once(plan.input.as_mut())),
             PhysicalPlan::Filter(plan) => Box::new(std::iter::once(plan.input.as_mut())),
             PhysicalPlan::EvalScalar(plan) => Box::new(std::iter::once(plan.input.as_mut())),
             PhysicalPlan::AggregateExpand(plan) => Box::new(std::iter::once(plan.input.as_mut())),
