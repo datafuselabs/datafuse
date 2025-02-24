@@ -130,7 +130,7 @@ impl FuseTable {
                         snapshot.summary.row_count as usize,
                         snapshot.summary.compressed_byte_size as usize,
                         segment_len,
-                        segment_len,
+                        snapshot.summary.block_count as usize,
                     ),
                     Partitions::create(PartitionsShuffleKind::Mod, segments),
                 ))
@@ -147,6 +147,7 @@ impl FuseTable {
         dry_run: bool,
     ) -> Result<(Option<Pipeline>, Option<Arc<SendPartState>>)> {
         let segments_location = plan.statistics.snapshot.clone();
+
         let table_schema = self.schema_with_stream();
         let dal = self.operator.clone();
         let mut lazy_init_segments = Vec::with_capacity(plan.parts.len());
@@ -194,6 +195,7 @@ impl FuseTable {
             limit,
             pruner.clone(),
             self.data_metrics.clone(),
+            plan.statistics.partitions_total,
         ));
 
         if ctx.get_settings().get_enable_prune_cache()? {

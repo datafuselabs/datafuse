@@ -66,11 +66,14 @@ impl SendPartState {
         limit: Option<usize>,
         fuse_pruner: Arc<FusePruner>,
         data_metrics: Arc<StorageMetrics>,
+        partitions_total: usize,
     ) -> Self {
+        let mut statistics = PartStatistics::default_exact();
+        statistics.partitions_total = partitions_total;
         SendPartState {
             cache: Mutex::new(SendPartCache {
                 partitions: Partitions::default(),
-                statistics: PartStatistics::default_exact(),
+                statistics: statistics,
                 derterministic_cache_key,
                 fuse_pruner,
             }),
@@ -110,6 +113,8 @@ impl SendPartState {
         }
         // the kind is determined by the push_downs, should be same for all partitions
         send_part_cache.partitions.kind = partitions.kind.clone();
+
+        // Update context statistics
         self.data_metrics
             .inc_partitions_total(send_part_cache.statistics.partitions_total as u64);
         self.data_metrics
@@ -186,7 +191,9 @@ impl AsyncSink for SendPartInfoSink {
                 let arrow_schema = self.schema.as_ref().into();
                 let column_nodes = ColumnNodes::new_from_schema(&arrow_schema, Some(&self.schema));
                 let block_metas = &data.block_metas;
+
                 self.statistics.partitions_scanned += block_metas.len();
+
                 let info_ptr = match self.push_downs.clone() {
                     None => self.all_columns_partitions(block_metas),
                     Some(extras) => match &extras.projection {
