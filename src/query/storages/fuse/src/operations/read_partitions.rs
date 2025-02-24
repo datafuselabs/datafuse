@@ -57,6 +57,7 @@ use sha2::Sha256;
 
 use crate::fuse_part::FuseBlockPartInfo;
 use crate::io::BloomIndexBuilder;
+use crate::pruning::create_segment_location_vector;
 use crate::pruning::table_sample;
 use crate::pruning::BlockPruner;
 use crate::pruning::FusePruner;
@@ -118,22 +119,36 @@ impl FuseTable {
                 let snapshot_loc = self
                     .meta_location_generator
                     .snapshot_location_from_uuid(&snapshot.snapshot_id, snapshot.format_version)?;
+                let enable_prune_pipeline = ctx.get_settings().get_enable_prune_pipeline()?;
+                let summary = snapshot.summary.block_count as usize;
+                if enable_prune_pipeline {
+                    let mut segments = Vec::with_capacity(segment_locs.len());
+                    for (idx, segment_location) in segment_locs.into_iter().enumerate() {
+                        segments.push(FuseLazyPartInfo::create(idx, segment_location))
+                    }
 
-                let mut segments = Vec::with_capacity(segment_locs.len());
-                for (idx, segment_location) in segment_locs.into_iter().enumerate() {
-                    segments.push(FuseLazyPartInfo::create(idx, segment_location))
+                    return Ok((
+                        PartStatistics::new_estimated(
+                            Some(snapshot_loc),
+                            snapshot.summary.row_count as usize,
+                            snapshot.summary.compressed_byte_size as usize,
+                            segment_len,
+                            summary,
+                        ),
+                        Partitions::create(PartitionsShuffleKind::Mod, segments),
+                    ));
                 }
-
-                Ok((
-                    PartStatistics::new_estimated(
-                        Some(snapshot_loc),
-                        snapshot.summary.row_count as usize,
-                        snapshot.summary.compressed_byte_size as usize,
-                        segment_len,
-                        snapshot.summary.block_count as usize,
-                    ),
-                    Partitions::create(PartitionsShuffleKind::Mod, segments),
-                ))
+                let segments_location =
+                    create_segment_location_vector(segment_locs, Some(snapshot_loc));
+                let table_schema = self.schema_with_stream();
+                self.prune_snapshot_blocks(
+                    ctx.clone(),
+                    push_downs.clone(),
+                    table_schema,
+                    segments_location,
+                    summary,
+                )
+                .await
             }
             None => Ok((PartStatistics::default(), Partitions::default())),
         }
