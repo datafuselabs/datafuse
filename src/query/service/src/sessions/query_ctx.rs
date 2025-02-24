@@ -37,6 +37,7 @@ use databend_common_base::base::SpillProgress;
 use databend_common_base::runtime::profile::Profile;
 use databend_common_base::runtime::profile::ProfileStatisticsName;
 use databend_common_base::runtime::GlobalIORuntime;
+use databend_common_base::runtime::MemStat;
 use databend_common_base::runtime::TrySpawn;
 use databend_common_base::JoinHandle;
 use databend_common_catalog::catalog::CATALOG_DEFAULT;
@@ -530,6 +531,18 @@ impl QueryContext {
         {
             log::error!("create spill meta file error: {}", e);
         }
+    }
+
+    pub fn get_mem_stat(&self) -> Option<Arc<MemStat>> {
+        self.shared.get_mem_stat()
+    }
+
+    pub fn set_mem_stat(&self, mem_stat: Option<Arc<MemStat>>) {
+        self.shared.set_mem_stat(mem_stat)
+    }
+
+    pub fn get_node_memory_updater(&self, node: &str) -> Arc<AtomicUsize> {
+        self.shared.get_node_memory_updater(node)
     }
 }
 
