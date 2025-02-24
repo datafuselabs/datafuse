@@ -99,6 +99,7 @@ async fn apply_snapshot_pruning(
         limit,
         fuse_pruner.clone(),
         fuse_table.data_metrics.clone(),
+        0,
     ));
     fuse_table.prune_segments_with_pipeline(
         fuse_pruner.clone(),

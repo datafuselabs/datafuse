@@ -73,7 +73,7 @@ impl SendPartState {
         SendPartState {
             cache: Mutex::new(SendPartCache {
                 partitions: Partitions::default(),
-                statistics: statistics,
+                statistics,
                 derterministic_cache_key,
                 fuse_pruner,
             }),
